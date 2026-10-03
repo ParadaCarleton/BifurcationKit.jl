@@ -72,6 +72,17 @@ let
     end
 end
 ####################################################################################################
+# the dot scaling and the step size control stay in the state's float type (Int quotients are Float64)
+let
+    for T in (Float64, Float32, Float16)
+        @test BK._inverse_length(ones(T, 5)) === inv(T(5))
+        @test BK._step_growth(T(0.1), T(0.5), 5, 2) isa T
+        @test BK.__scaling_function_dot_palc(ones(T, 4)) == fill(T(0.25), 4)
+    end
+    # Float64 results are those of `ds * (1 + a * ((Nmax - itnewton) / Nmax)^2)`
+    @test BK._step_growth(0.1, 0.5, 5, 2) == 0.1 * (1 + 0.5 * ((5 - 2) / 5)^2)
+end
+####################################################################################################
 # test continuation algorithm
 let
 BK.empty(Natural())
