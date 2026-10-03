@@ -42,6 +42,22 @@ _get_apply_dot(dt::DotTheta) = dt.apply!
 
 (dt::DotTheta)(a::BorderedArray{vec, T}, b::BorderedArray{vec, T}, θ::T) where {vec, T} = dt(a.u, b.u, a.p, b.p, θ)
 (dt::DotTheta)(a::BorderedArray{vec, T}, θ::T) where {vec, T} = dt(a.u, a.p, θ)
+
+"""
+$(TYPEDSIGNATURES)
+
+Cosine, in the norm of `dt`, between the tangent `τ` at `z` and the chord from `z` to `znew`. It is 1 when the chord or the tangent is empty.
+"""
+function chord_alignment(dt::DotTheta, τ::BorderedArray, z::BorderedArray, znew::BorderedArray, θ::Real)
+    Δ = _copy(znew)
+    Δ = VI.add!!(Δ, z, -one(θ))
+    chord_length = sqrt(dt(Δ.u, Δ.u, Δ.p, Δ.p, θ))
+    tangent_length = sqrt(dt(τ.u, τ.u, τ.p, τ.p, θ))
+    if iszero(chord_length) || iszero(tangent_length)
+        return one(chord_length)
+    end
+    return dt(τ.u, Δ.u, τ.p, Δ.p, θ) / (tangent_length * chord_length)
+end
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # equation of the arc length constraint
 arc_length_eq(dt::DotTheta, u, p, du, dp, θ, ds) = dt(u, du, p, dp, θ) - ds
@@ -70,7 +86,7 @@ Additional information is available on the [website](https://bifurcationkit.gith
 $(TYPEDFIELDS)
 
 """
-@with_kw struct PALC{Ttang <: AbstractTangentComputation, Tbls <: AbstractLinearSolver, T, Tdot, Tcor} <: AbstractContinuationAlgorithm
+@with_kw struct PALC{Ttang <: AbstractTangentComputation, Tbls <: AbstractLinearSolver, T, Tdot, Tcor, Tacc} <: AbstractContinuationAlgorithm
     "Tangent (predictor), must be a subtype of `AbstractTangentComputation`. For example `Secant()` or `Bordered()`, etc."
     tangent::Ttang = Secant()
     "`θ` is a parameter in the arclength constraint. It is very **important** to tune it. It should be tuned for the continuation to work properly especially in the case of large problems where the < x - x_0, dx_0 > component in the constraint equation might be favoured too much. Also, large thetas favour p as the corresponding term in N involves the term 1-theta."
@@ -83,9 +99,12 @@ $(TYPEDFIELDS)
     dotθ::Tdot = DotTheta()
     "Corrector of the bordered system. `nothing` (default) is BifurcationKit's own Newton method [`newton_palc`](@ref); a [`NonlinearSolveCorrector`](@ref) solves it with NonlinearSolve.jl."
     corrector::Tcor = nothing
+    "Step acceptance tests and step size rule, `nothing` (the default) or [`AllgowerGeorg`](@ref). With `nothing` `ds` is controlled by the number of Newton iterations, see the parameter `a` of [`ContinuationPar`](@ref)."
+    step_acceptance::Tacc = nothing
 
     @assert ~(tangent isa Constant) "You cannot use a constant predictor with PALC"
     @assert 0 <= θ <= 1 "θ must belong to [0, 1]"
+    @assert isnothing(step_acceptance) || isnothing(corrector) "step_acceptance needs the Newton steps of BifurcationKit's own corrector: it cannot be combined with `corrector`"
 end
 get_bordered_linsolver(alg::PALC) = alg.bls
 getdot(alg::PALC) = alg.dotθ
@@ -159,22 +178,53 @@ function corrector!(state::AbstractContinuationState,
                     it::AbstractContinuationIterable,
                     alg::PALC;
                     kwargs...)
+    # a growth decided by an earlier step must not outlive it
+    state.step_factor = nothing
     if state.z_pred.p <= it.contparams.p_min || state.z_pred.p >= it.contparams.p_max
         state.z_pred.p = clamp_predp(state.z_pred.p, it)
         return corrector!(state, it, Natural(false, alg.corrector); kwargs...)
     end
-    sol = _corrector_palc(alg.corrector, it, state, getdot(alg);
-                      linearbdalgo = alg.bls, 
-                      normN = it.normC, 
-                      callback = it.callback_newton, 
-                      kwargs...)
+    # the bisection that locates special points prescribes `ds` (`state.stepsizecontrol == false`): no step is refused there
+    acceptance = alg.step_acceptance
+    if ~stepsizecontrol(state)
+        acceptance = nothing
+    end
+    if isnothing(alg.corrector)
+        sol, quality = _newton_palc(it, state, getdot(alg);
+                                    linearbdalgo = alg.bls,
+                                    normN = it.normC,
+                                    callback = it.callback_newton,
+                                    acceptance,
+                                    kwargs...)
+    else
+        # the acceptance tests need the Newton steps of BifurcationKit's own corrector (PALC's constructor refuses both)
+        sol = _corrector_palc(alg.corrector, it, state, getdot(alg);
+                              linearbdalgo = alg.bls,
+                              normN = it.normC,
+                              callback = it.callback_newton,
+                              kwargs...)
+        quality = nothing
+    end
+
+    # the converged point must also lie ahead of the step
+    accepted = converged(sol)
+    if accepted && ~isnothing(acceptance)
+        alignment = chord_alignment(getdot(alg), state.τ, state.z, sol.u, getθ(alg))
+        accepted = alignment >= acceptance.min_alignment
+        if ~accepted && it.verbosity > 0
+            printstyled("Step rejected by the Allgower-Georg tests: the cosine between the tangent and the step is $alignment < $(acceptance.min_alignment)\n", color = :red)
+        end
+    end
 
     # update fields, in particular the `converged` one
-    _update_field_but_not_solution!(state, sol)
+    _update_field_but_not_solution!(state, sol; accepted)
 
     # update solution
-    if converged(sol)
+    if accepted
         _copyto!(state.z, sol.u)
+        if ~isnothing(acceptance)
+            state.step_factor = growth_factor(quality)
+        end
     end
 
     return true
@@ -189,11 +239,22 @@ with the scalar condition `n(x, p) ≡ θ ⋅ <x - x0, τx> + (1 - θ) ⋅ (p - 
 
 The initial guess for the newton method is located in `state.z_pred`
 """
-function newton_palc(iter::AbstractContinuationIterable,
+newton_palc(iter::AbstractContinuationIterable,
+            state::AbstractContinuationState,
+            dotθ = getdot(iter);
+            kwargs...) = first(_newton_palc(iter, state, dotθ; kwargs...))
+
+"""
+$(TYPEDSIGNATURES)
+
+[`newton_palc`](@ref) which also returns the lengths of the Newton steps (in the norm of the arc length constraint) when `acceptance::AllgowerGeorg` is passed. The corrector stops, not converged, as soon as `acceptance` rejects a step.
+"""
+function _newton_palc(iter::AbstractContinuationIterable,
                     state::AbstractContinuationState,
                     dotθ = getdot(iter);
                     normN = norm,
                     callback = cb_default,
+                    acceptance = nothing,
                     kwargs...)
     prob = iter.prob
     par = getparams(prob)
@@ -233,6 +294,14 @@ function newton_palc(iter::AbstractContinuationIterable,
     residuals = [res]
     step = 0
     itlineartot = 0
+    # what the corrector has shown of its quality, only followed when the step is tested
+    if isnothing(acceptance)
+        quality = nothing
+    else
+        acceptance = AllgowerGeorg{𝒯}(acceptance)
+        quality = StepQuality(acceptance)
+    end
+    rejected = false
 
     verbose && print_nonlinear_step(step, res)
     line_step = true
@@ -255,6 +324,17 @@ function newton_palc(iter::AbstractContinuationIterable,
         u, up, flag, itlinear = solve_bls_palc(linsolver, iter, state, J, dFdp, res_f, res_n)
         ~flag && @debug "[newton_palc] Linear solver for J did not converge."
         itlineartot += sum(itlinear)
+
+        # step acceptance (Allgower-Georg): the Newton step is the distance to the curve
+        if ~isnothing(quality)
+            distance = convert(𝒯, sqrt(dotθ(u, u, up, up, θ)))
+            if rejects_step(acceptance, quality, distance, tol)
+                rejected = true
+                verbose && printstyled("Step rejected by the Allgower-Georg tests at Newton step $(quality.steps + 1)\n", color = :red)
+                break
+            end
+            quality = observe(acceptance, quality, distance, tol)
+        end
 
         if linesearch
             line_step = false
@@ -299,12 +379,12 @@ function newton_palc(iter::AbstractContinuationIterable,
         compute = callback((;x, res_f, J, residual=res, step, itlinear, contparams, z0, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...)
     end
     verbose && print_nonlinear_step(step, res, 0, true) # display last line of the table
-    flag = (residuals[end] < tol) & callback((;x, res_f, residual = res, step, contparams, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...)
+    flag = (residuals[end] < tol) & callback((;x, res_f, residual = res, step, contparams, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...) & ~rejected
 
     return NonLinearSolution(BorderedArray(x, p),
                             prob,
                             residuals,
                             flag,
                             step,
-                            itlineartot)
+                            itlineartot), quality
 end
