@@ -122,4 +122,12 @@ let
     @test minimum(turns(br_free)) < 0.99
     @test minimum(turns(br_turn)) >= 0.99 - 1e-8
     @test maximum(abs, br_turn.branch.ds) < maximum(abs, br_free.branch.ds)
+
+    # a negative ds walks the circle the other way: the chord is tested against `sign(ds) τ`, so the continuation is not refused
+    backwards = ContinuationPar(options; ds = -0.05)
+    br_back = continuation(prob, PALC(step_acceptance = constrained), backwards)
+    @test length(br_back.branch) > 20
+    @test br_back.branch.param[2] < br_back.branch.param[1]
+    @test minimum(turns(br_back)) >= 0.99 - 1e-8
+    @test length(continuation(prob, PALC(step_acceptance = AllgowerGeorg()), backwards).branch) > 5
 end

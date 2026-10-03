@@ -206,10 +206,10 @@ function corrector!(state::AbstractContinuationState,
         quality = nothing
     end
 
-    # the converged point must also lie ahead of the step
+    # the converged point must also lie ahead of the step: the predictor is `z + ds τ`, so the direction of travel is `sign(ds) τ`
     accepted = converged(sol)
     if accepted && ~isnothing(acceptance)
-        alignment = chord_alignment(getdot(alg), state.τ, state.z, sol.u, getθ(alg))
+        alignment = sign(state.ds) * chord_alignment(getdot(alg), state.τ, state.z, sol.u, getθ(alg))
         accepted = alignment >= acceptance.min_alignment
         if ~accepted && it.verbosity > 0
             printstyled("Step rejected by the Allgower-Georg tests: the cosine between the tangent and the step is $alignment < $(acceptance.min_alignment)\n", color = :red)
