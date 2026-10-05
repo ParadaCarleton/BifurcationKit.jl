@@ -84,8 +84,34 @@ function corrector_matrix end
 _corrector_newton(::Nothing, prob::AbstractBifurcationProblem, x0::Any, params0::Any, options::NewtonPar; kwargs...) = _newton(prob, x0, params0, options; kwargs...)
 _corrector_newton(corrector::NonlinearSolveCorrector, prob::AbstractBifurcationProblem, x0::Any, params0::Any, options::NewtonPar; kwargs...) = _newton_nonlinearsolve(corrector, prob, x0, params0, options; kwargs...)
 
-# the corrector of PALC
-_corrector_palc(::Nothing, iter::AbstractContinuationIterable, state::AbstractContinuationState, dotθ::Any; kwargs...) = newton_palc(iter, state, dotθ; kwargs...)
-_corrector_palc(corrector::NonlinearSolveCorrector, iter::AbstractContinuationIterable, state::AbstractContinuationState, dotθ::Any; kwargs...) = _newton_palc_nonlinearsolve(corrector, iter, state, dotθ; kwargs...)
+"""
+    _corrector_palc(corrector, iter, state, dotθ; control = nothing, kwargs...)
+
+The corrector of a [`PALC`](@ref) step from the predictor `state.z_pred`: the solution and the quality of the corrector for the step control `control` (a [`CorrectorQuality`](@ref), or `nothing` when the step is not tested). A corrector that does not measure its quality (`measures_quality(corrector) == false`) returns `nothing` in its place. `nothing` is BifurcationKit's own Newton method [`newton_palc`](@ref). A user corrector adds methods of this function, of [`_corrector_at_bound`](@ref) and of [`measures_quality`](@ref) for its type.
+"""
+_corrector_palc(::Nothing, iter::AbstractContinuationIterable, state::AbstractContinuationState, dotθ::Any; kwargs...) = _newton_palc(iter, state, dotθ; kwargs...)
+_corrector_palc(corrector::NonlinearSolveCorrector, iter::AbstractContinuationIterable, state::AbstractContinuationState, dotθ::Any; control::Any = nothing, kwargs...) = (_newton_palc_nonlinearsolve(corrector, iter, state, dotθ; kwargs...), nothing)
+
+"""
+    _corrector_at_bound(corrector, iter, state, dotθ; control = nothing, kwargs...)
+
+The corrector of a [`PALC`](@ref) step whose predictor lies beyond `p_min` or `p_max`: `F(x, p) = 0` is solved at the bound `p = clamp(state.z_pred.p)` from `state.z_pred.u`. Returns the solution, a `BorderedArray` at the bound, and the quality of the corrector for `control` like [`_corrector_palc`](@ref).
+"""
+_corrector_at_bound(::Nothing, iter::AbstractContinuationIterable, state::AbstractContinuationState, dotθ::Any; control::Any = nothing, kwargs...) = _newton_at_bound(iter, state, dotθ, control; kwargs...)
+
+function _corrector_at_bound(corrector::NonlinearSolveCorrector, iter::AbstractContinuationIterable, state::AbstractContinuationState, dotθ::Any; control::Any = nothing, kwargs...)
+    p = clamp_predp(state.z_pred.p, iter)
+    sol = _newton_nonlinearsolve(corrector, iter.prob, state.z_pred.u, setparam(iter, p), iter.contparams.newton_options;
+                                 normN = iter.normC, callback = iter.callback_newton, kwargs...)
+    return NonLinearSolution(BorderedArray(sol.u, p), sol.prob, sol.residuals, sol.converged, sol.itnewton, sol.itlineartot), nothing
+end
+
+"""
+    measures_quality(corrector)
+
+Whether `corrector` returns the quality of its steps, which the step control [`CorrectorQuality`](@ref) of [`PALC`](@ref) needs: `true` for BifurcationKit's own Newton method (`nothing`), `false` by default.
+"""
+measures_quality(::Nothing) = true
+measures_quality(::Any) = false
 
 solve(prob::AbstractBifurcationProblem, corrector::NonlinearSolveCorrector, options::NewtonPar; kwargs...) = _newton_nonlinearsolve(corrector, prob, getu0(prob), getparams(prob), options; kwargs...)

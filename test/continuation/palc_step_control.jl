@@ -126,6 +126,23 @@ let
     end
 end
 ####################################################################################################
+"A user corrector: BifurcationKit's own Newton method, counting its calls mid-path and at the bound."
+struct TestCorrector
+    calls::Dict{Symbol, Int}
+end
+TestCorrector() = TestCorrector(Dict(:palc => 0, :bound => 0))
+BK.measures_quality(::TestCorrector) = true
+function BK._corrector_palc(corrector::TestCorrector, iter::BK.AbstractContinuationIterable, state::BK.AbstractContinuationState, dotθ; kwargs...)
+    corrector.calls[:palc] += 1
+    return BK._newton_palc(iter, state, dotθ; kwargs...)
+end
+function BK._corrector_at_bound(corrector::TestCorrector, iter::BK.AbstractContinuationIterable, state::BK.AbstractContinuationState, dotθ; control = nothing, kwargs...)
+    corrector.calls[:bound] += 1
+    return BK._newton_at_bound(iter, state, dotθ, control; kwargs...)
+end
+"A corrector that does not report the lengths of its Newton steps."
+struct UnmeasuredCorrector end
+
 # orientation_check: determinant orientation of a Bordered tangent, rejection on a negative dot product
 let
     F(u, p) = @. u^2 + p.λ^2 - 1
@@ -226,4 +243,33 @@ let
         alg = PALC(; tangent = Bordered(), step_control = CorrectorQuality(; max_distance))
         @test BK.converged(bounded_state(alg, on_branch)) == accepted
     end
+
+    # a user corrector is tested like BifurcationKit's own, mid-path and at the bound, from the quality it returns
+    corrector = TestCorrector()
+    custom(; keywords...) = PALC(; tangent = Bordered(), corrector, keywords...)
+    midpath_state(alg, z_pred) = let iter = ContIterable(prob, alg, options)
+        state = iterate(iter)[1]
+        state.z = point(φ0)
+        state.τ = unit_tangent(φ0)
+        state.orientation = 1
+        state.z_pred = z_pred
+        state.ds = dotθ(z_pred.u .- state.z.u, state.τ.u, z_pred.p - state.z.p, state.τ.p, 0.5)
+        BK.corrector!(state, iter, alg)
+        state
+    end
+    for (check, turns_back) in ((true, true), (false, false))
+        @test BK.converged(midpath_state(custom(; orientation_check = check), far)) == ~turns_back
+        @test BK.converged(bounded_state(custom(; orientation_check = check), over_the_top)) == ~turns_back
+        @test BK.converged(bounded_state(custom(; orientation_check = check), on_branch))
+    end
+    # off the branch, so the corrector takes Newton steps
+    near = BorderedArray([cos(φ0 + 0.1) + 0.05], sin(φ0 + 0.1))
+    for (max_distance, accepted) in ((1e-3, false), (1.0, true))
+        @test BK.converged(midpath_state(custom(; step_control = CorrectorQuality(; max_distance)), near)) == accepted
+        @test BK.converged(bounded_state(custom(; step_control = CorrectorQuality(; max_distance)), on_branch)) == accepted
+    end
+    @test corrector.calls[:palc] == 4
+    @test corrector.calls[:bound] == 6
+    # a corrector that does not return its quality cannot take step control
+    @test_throws AssertionError PALC(; corrector = UnmeasuredCorrector(), step_control = CorrectorQuality(; max_distance = 1.0))
 end

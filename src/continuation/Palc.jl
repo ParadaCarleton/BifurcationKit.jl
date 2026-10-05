@@ -97,7 +97,7 @@ $(TYPEDFIELDS)
     bls::Tbls = MatrixBLS()
     "`dotθ = DotTheta()`, this sets up a dot product `(x, y) -> dot(x, y) / length(x)` used to define the weighted dot product (resp. norm) ``\\|(x, p)\\|^2_\\theta`` in the constraint ``N(x, p)`` (see online docs on [PALC](https://bifurcationkit.github.io/BifurcationKitDocs.jl/dev/PALC/)). This argument can be used to remove the factor `1/length(x)` for example in problems where the dimension of the state space changes (mesh adaptation, ...) or when a specific (FEM) dot product is provided."
     dotθ::Tdot = DotTheta()
-    "Corrector of the bordered system. `nothing` (default) is BifurcationKit's own Newton method [`newton_palc`](@ref); a [`NonlinearSolveCorrector`](@ref) solves it with NonlinearSolve.jl."
+    "Corrector of the bordered system. `nothing` (default) is BifurcationKit's own Newton method [`newton_palc`](@ref); a [`NonlinearSolveCorrector`](@ref) solves it with NonlinearSolve.jl; a user corrector implements [`_corrector_palc`](@ref) and [`_corrector_at_bound`](@ref)."
     corrector::Tcor = nothing
     "Step control by the quality of the corrector, a [`CorrectorQuality`](@ref) or `nothing` (the default). With `nothing`, `ds` is controlled by the number of Newton iterations, see the parameter `a` of [`ContinuationPar`](@ref)."
     step_control::Tctl = nothing
@@ -106,7 +106,7 @@ $(TYPEDFIELDS)
 
     @assert ~(tangent isa Constant) "You cannot use a constant predictor with PALC"
     @assert 0 <= θ <= 1 "θ must belong to [0, 1]"
-    @assert isnothing(step_control) || isnothing(corrector) "step_control needs the Newton steps of BifurcationKit's own corrector: it cannot be combined with `corrector`"
+    @assert isnothing(step_control) || measures_quality(corrector) "step_control needs the lengths of the corrector's Newton steps: `corrector` does not report them (`measures_quality`)"
     @assert ~orientation_check || tangent isa Union{Secant, Bordered} "orientation_check needs a Secant or Bordered tangent"
 end
 get_bordered_linsolver(alg::PALC) = alg.bls
@@ -218,12 +218,6 @@ function corrector!(state::AbstractContinuationState,
     state.step_factor = nothing
     state.next_tangent = nothing
     at_bound = state.z_pred.p <= it.contparams.p_min || state.z_pred.p >= it.contparams.p_max
-    if at_bound
-        state.z_pred.p = clamp_predp(state.z_pred.p, it)
-        if ~isnothing(alg.corrector)
-            return corrector!(state, it, Natural(false, alg.corrector); kwargs...)
-        end
-    end
     # the bisection that locates special points prescribes `ds` (`state.stepsizecontrol == false`): no step is refused there
     control = alg.step_control
     orientation_check = alg.orientation_check
@@ -232,22 +226,15 @@ function corrector!(state::AbstractContinuationState,
         orientation_check = false
     end
     if at_bound
-        sol, quality = _newton_at_bound(it, state, getdot(alg), control; kwargs...)
-    elseif isnothing(alg.corrector)
-        sol, quality = _newton_palc(it, state, getdot(alg);
-                                    linearbdalgo = alg.bls,
-                                    normN = it.normC,
-                                    callback = it.callback_newton,
-                                    control,
-                                    kwargs...)
+        state.z_pred.p = clamp_predp(state.z_pred.p, it)
+        sol, quality = _corrector_at_bound(alg.corrector, it, state, getdot(alg); control, kwargs...)
     else
-        # step control needs the Newton steps of BifurcationKit's own corrector (PALC's constructor refuses both)
-        sol = _corrector_palc(alg.corrector, it, state, getdot(alg);
-                              linearbdalgo = alg.bls,
-                              normN = it.normC,
-                              callback = it.callback_newton,
-                              kwargs...)
-        quality = nothing
+        sol, quality = _corrector_palc(alg.corrector, it, state, getdot(alg);
+                                       linearbdalgo = alg.bls,
+                                       normN = it.normC,
+                                       callback = it.callback_newton,
+                                       control,
+                                       kwargs...)
     end
 
     accepted = converged(sol)
