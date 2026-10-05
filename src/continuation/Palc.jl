@@ -90,7 +90,7 @@ Additional information is available on the [website](https://bifurcationkit.gith
 $(TYPEDFIELDS)
 
 """
-@with_kw struct PALC{Ttang <: AbstractTangentComputation, Tbls <: AbstractLinearSolver, T, Tdot, Tctl} <: AbstractContinuationAlgorithm
+@with_kw struct PALC{Ttang <: AbstractTangentComputation, Tbls <: AbstractLinearSolver, T, Tdot, Tcor, Tctl} <: AbstractContinuationAlgorithm
     "Tangent (predictor), must be a subtype of `AbstractTangentComputation`. For example `Secant()` or `Bordered()`, etc."
     tangent::Ttang = Secant()
     "`θ` is a parameter in the arclength constraint. It is very **important** to tune it. It should be tuned for the continuation to work properly especially in the case of large problems where the < x - x_0, dx_0 > component in the constraint equation might be favoured too much. Also, large thetas favour p as the corresponding term in N involves the term 1-theta."
@@ -101,6 +101,8 @@ $(TYPEDFIELDS)
     bls::Tbls = MatrixBLS()
     "`dotθ = DotTheta()`, this sets up a dot product `(x, y) -> dot(x, y) / length(x)` used to define the weighted dot product (resp. norm) ``\\|(x, p)\\|^2_\\theta`` in the constraint ``N(x, p)`` (see online docs on [PALC](https://bifurcationkit.github.io/BifurcationKitDocs.jl/dev/PALC/)). This argument can be used to remove the factor `1/length(x)` for example in problems where the dimension of the state space changes (mesh adaptation, ...) or when a specific (FEM) dot product is provided."
     dotθ::Tdot = DotTheta()
+    "Corrector of the bordered system. `nothing` (default) is BifurcationKit's own Newton method [`newton_palc`](@ref); a [`NonlinearSolveCorrector`](@ref) solves it with NonlinearSolve.jl."
+    corrector::Tcor = nothing
     "Step control by the quality of the corrector, a [`CorrectorQuality`](@ref) or `nothing` (the default). With `nothing`, `ds` is controlled by the number of Newton iterations, see the parameter `a` of [`ContinuationPar`](@ref)."
     step_control::Tctl = nothing
     "Reject a step whose converged point lies behind the step: the chord from the previous point has a negative dot product with the tangent there, which means that the continuation turns back on itself (Gambit's orientation test). Off by default."
@@ -108,6 +110,7 @@ $(TYPEDFIELDS)
 
     @assert ~(tangent isa Constant) "You cannot use a constant predictor with PALC"
     @assert 0 <= θ <= 1 "θ must belong to [0, 1]"
+    @assert isnothing(step_control) || isnothing(corrector) "step_control needs the Newton steps of BifurcationKit's own corrector: it cannot be combined with `corrector`"
 end
 get_bordered_linsolver(alg::PALC) = alg.bls
 getdot(alg::PALC) = alg.dotθ
@@ -185,7 +188,7 @@ function corrector!(state::AbstractContinuationState,
     state.step_factor = nothing
     if state.z_pred.p <= it.contparams.p_min || state.z_pred.p >= it.contparams.p_max
         state.z_pred.p = clamp_predp(state.z_pred.p, it)
-        return corrector!(state, it, Natural(); kwargs...)
+        return corrector!(state, it, Natural(false, alg.corrector); kwargs...)
     end
     # the bisection that locates special points prescribes `ds` (`state.stepsizecontrol == false`): no step is refused there
     control = alg.step_control
@@ -194,12 +197,22 @@ function corrector!(state::AbstractContinuationState,
         control = nothing
         orientation_check = false
     end
-    sol, quality = _newton_palc(it, state, getdot(alg);
-                                linearbdalgo = alg.bls,
-                                normN = it.normC,
-                                callback = it.callback_newton,
-                                control,
-                                kwargs...)
+    if isnothing(alg.corrector)
+        sol, quality = _newton_palc(it, state, getdot(alg);
+                                    linearbdalgo = alg.bls,
+                                    normN = it.normC,
+                                    callback = it.callback_newton,
+                                    control,
+                                    kwargs...)
+    else
+        # step control needs the Newton steps of BifurcationKit's own corrector (PALC's constructor refuses both)
+        sol = _corrector_palc(alg.corrector, it, state, getdot(alg);
+                              linearbdalgo = alg.bls,
+                              normN = it.normC,
+                              callback = it.callback_newton,
+                              kwargs...)
+        quality = nothing
+    end
 
     accepted = converged(sol)
     if accepted && orientation_check
