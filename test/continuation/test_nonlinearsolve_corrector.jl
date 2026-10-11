@@ -148,7 +148,7 @@ opts_bratu = ContinuationPar(
             1.0e-8
     end
 
-    @testset "a corrector ending outside [p_min, p_max] has not converged" begin
+    @testset "a step past p_max ends the branch on p_max" begin
         # the first step goes to p = 0.01 + 0.5 > p_max
         opts = ContinuationPar(
             opts_bratu;
@@ -163,6 +163,8 @@ opts_bratu = ContinuationPar(
             opts,
         )
         @test all(br.branch.param .<= 0.2)
+        @test br.branch.param[end] == 0.2
+        @test norm(F_bratu(br.sol[end].x, (λ = br.sol[end].p,)), Inf) < 1.0e-8
     end
 
     @testset "an algorithm with box constraints ends the branch at p_max" begin

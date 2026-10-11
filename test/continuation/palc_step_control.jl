@@ -1,4 +1,5 @@
 using Test, BifurcationKit, LinearAlgebra
+using NonlinearSolve: NewtonRaphson
 const BK = BifurcationKit
 ####################################################################################################
 # the pure rules of CorrectorQuality
@@ -270,6 +271,29 @@ let
     end
     @test corrector.calls[:palc] == 4
     @test corrector.calls[:bound] == 6
+
+    # a corrector from an interior predictor that converges past p_max is corrected at p_max from where it
+    # ended: below the centre of the circle the corrector raises λ beyond a predictor that lies short of p_max.
+    # Only a corrector that leaves p free gets there; BifurcationKit's Newton method clamps p into the box
+    φ2 = -π / 6
+    along = 0.4
+    predicted = BorderedArray(point(φ2).u .- along * sin(φ2), point(φ2).p + along * cos(φ2))
+    past_options = ContinuationPar(options; p_max = -0.148)
+    @test predicted.p < past_options.p_max < sin(φ2 + atan(along))
+    for past_corrector in (NonlinearSolveCorrector(NewtonRaphson()),)
+        alg = PALC(; tangent = Bordered(), corrector = past_corrector)
+        iter = ContIterable(prob, alg, past_options)
+        state = iterate(iter)[1]
+        state.z = point(φ2)
+        state.τ = unit_tangent(φ2)
+        state.orientation = 1
+        state.z_pred = predicted
+        state.ds = dotθ(predicted.u .- state.z.u, state.τ.u, predicted.p - state.z.p, state.τ.p, 0.5)
+        BK.corrector!(state, iter, alg)
+        @test BK.converged(state)
+        @test state.z.p == -0.148
+        @test state.z.u[1] ≈ sqrt(1 - 0.148^2) rtol = 1e-8
+    end
     # a corrector that does not return its quality cannot take step control
     @test_throws AssertionError PALC(; corrector = UnmeasuredCorrector(), step_control = CorrectorQuality(; max_distance = 1.0))
 end
