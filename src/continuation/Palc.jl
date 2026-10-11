@@ -195,7 +195,6 @@ function newton_palc(iter::AbstractContinuationIterable,
                     kwargs...)
     prob = iter.prob
     par = getparams(prob)
-    ϵ = getdelta(prob)
     paramlens = getlens(iter)
     contparams = getcontparams(iter)
     θ = getθ(iter)
@@ -217,7 +216,7 @@ function newton_palc(iter::AbstractContinuationIterable,
     x_pred = _copy(x)
 
     res_f = residual(prob, x, set(par, paramlens, p));  res_n = N(x, p)
-    dFdp = R01(FiniteDifferences(), prob, x, set(par, paramlens, p))
+    dFdp = _dFdp(prob, x, set(par, paramlens, p))
 
     res       = normAC(res_f, res_n)
     residuals = [res]
@@ -230,7 +229,7 @@ function newton_palc(iter::AbstractContinuationIterable,
     compute = callback((;x, res_f, residual = res, step, contparams, z0, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...)
 
     while (step < max_iterations) && (res > tol) && line_step && compute
-        R01!(FiniteDifferences(), prob, dFdp, x, par, p, res_f)
+        dFdp = _dFdp!(prob, dFdp, x, par, p, res_f)
         J = jacobian(prob, x, set(par, paramlens, p))
         
         # solve linear system

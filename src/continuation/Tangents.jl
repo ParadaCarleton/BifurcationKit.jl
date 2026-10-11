@@ -73,15 +73,11 @@ function gettangent!(state::AbstractContinuationState,
                     ::Bordered, 
                     dotθ)
     (iter.verbosity > 0) && println("Predictor: Bordered")
-    ϵ = getdelta(iter.prob)
     τ = state.τ
     θ = getθ(iter)
     T = eltype(iter)
 
-    # dFdl = (F(z.u, z.p + ϵ) - F(z.u, z.p)) / ϵ
-    dFdl = residual(iter.prob, state.z.u, setparam(iter, state.z.p + ϵ))
-    dFdl = minus!!(dFdl, residual(iter.prob, state.z.u, setparam(iter, state.z.p)))
-    dFdl = VI.scale!!(dFdl, 1/ϵ)
+    dFdl = _dFdp(iter.prob, state.z.u, setparam(iter, state.z.p))
 
     # compute jacobian at the current solution
     J = jacobian(iter.prob, state.z.u, setparam(iter, state.z.p))

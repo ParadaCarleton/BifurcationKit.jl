@@ -321,6 +321,27 @@ function R01(::FiniteDifferences,
     return dFdp
 end
 
+# whether the jet's `R01` is a function passed by the user; the default `AutoDiff()` (an explicit `AutoDiff()` too) is not
+_user_R01(prob::AbstractAllJetBifProblem) = has_R01_trait(prob) isa TraitUserPassed
+_user_R01(prob::AbstractBifurcationProblem) = false
+
+# `∂ₚF` by the user's `R01` when there is one, else by forward finite differences
+function _dFdp(prob::AbstractBifurcationProblem, x, par)
+    if _user_R01(prob)
+        return R01(prob, x, par)
+    end
+    return R01(FiniteDifferences(), prob, x, par)
+end
+
+# `∂ₚF` at `(x, p)`: by the user's `R01` when there is one, else by forward finite differences in `dFdp`, from the residual
+# `res_f = F(x, p)` when it is given, so the default path keeps the cost of `R01!`
+function _dFdp!(prob::AbstractBifurcationProblem, dFdp, x, par, p::Number, res_f = nothing)
+    if _user_R01(prob)
+        return R01(prob, x, set(par, getlens(prob), p))
+    end
+    return R01!(FiniteDifferences(), prob, dFdp, x, par, p, res_f)
+end
+
 function R02(::FiniteDifferences,
                 prob::AbstractBifurcationProblem,
                 x0,
