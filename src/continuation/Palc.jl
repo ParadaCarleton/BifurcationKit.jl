@@ -188,7 +188,7 @@ update_predictor!(state::AbstractContinuationState,
 """
 $(TYPEDSIGNATURES)
 
-The corrector of a step whose predictor lies beyond `p_min` or `p_max`: the predictor is put on the bound and Newton's method solves `F(x, p) = 0` there (the `Natural` corrector), with the tests of `control` on the lengths of its steps, taken in the norm of the arc length constraint with no parameter component. Returns the solution and its quality like `_newton_palc`.
+The corrector of a step whose predictor lies beyond `p_min` or `p_max`, or whose corrector from an interior predictor ended on or beyond one: the predictor (or the point the corrector ended at) is put on the bound and Newton's method solves `F(x, p) = 0` there (the `Natural` corrector), with the tests of `control` on the lengths of its steps, taken in the norm of the arc length constraint with no parameter component. Returns the solution and its quality like `_newton_palc`.
 """
 function _newton_at_bound(iter::AbstractContinuationIterable,
                           state::AbstractContinuationState,
@@ -235,6 +235,14 @@ function corrector!(state::AbstractContinuationState,
                                        callback = it.callback_newton,
                                        control,
                                        kwargs...)
+        # a corrector from an interior predictor that converges on or past a bound is corrected at that
+        # bound from where it ended, like a predictor past the bound. BifurcationKit's Newton method clamps p
+        # into [p_min, p_max], so its corrector stops on a bound unconverged and the step is halved as before
+        if converged(sol) && ~isindomain(it, sol.u.p)
+            _copyto!(state.z_pred, sol.u)
+            state.z_pred.p = clamp_predp(sol.u.p, it)
+            sol, quality = _corrector_at_bound(alg.corrector, it, state, getdot(alg); control, kwargs...)
+        end
     end
 
     accepted = converged(sol)
