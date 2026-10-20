@@ -210,6 +210,13 @@ function _newton_at_bound(iter::AbstractContinuationIterable,
     return NonLinearSolution(BorderedArray(sol.u, p), sol.prob, sol.residuals, sol.converged, sol.itnewton, sol.itlineartot), quality
 end
 
+"""
+$(TYPEDSIGNATURES)
+
+Whether the corrected point `new` equals the current point `current` in every coordinate: a step that moved nothing.
+"""
+stalled_step(new::BorderedArray, current::BorderedArray) = new.p == current.p && new.u == current.u
+
 function corrector!(state::AbstractContinuationState,
                     it::AbstractContinuationIterable,
                     alg::PALC;
@@ -260,6 +267,15 @@ function _corrector!(state::AbstractContinuationState,
         if ~accepted && it.verbosity > 0
             printstyled("Step rejected: the new tangent points away from the previous one (dot product $cosine)\n", color = :red)
         end
+    end
+
+    # a converged point equal to the current one is a step under the state's floating-point resolution:
+    # the secant through the two has no direction, so the continuation stops at the current point
+    if accepted && stalled_step(sol.u, state.z)
+        accepted = false
+        state.stopcontinuation = true
+        @debug "step moved nothing; continuation stopped" _group = :step_control ds = state.ds p = getp(state)
+        it.verbosity > 0 && printstyled("Step of length $(state.ds) moved nothing: continuation stopped\n", color = :red)
     end
 
     # update fields, in particular the `converged` one
