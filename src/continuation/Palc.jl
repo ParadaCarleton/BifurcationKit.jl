@@ -270,8 +270,8 @@ function _corrector!(state::AbstractContinuationState,
     end
 
     # a converged point equal to the current one is a step under the state's floating-point resolution:
-    # the secant through the two has no direction, so the continuation stops at the current point
-    if accepted && stalled_step(sol.u, state.z)
+    # a secant through the two has no direction, so a secant continuation stops at the current point
+    if accepted && alg.tangent isa Secant && stalled_step(sol.u, state.z)
         accepted = false
         state.stopcontinuation = true
         @debug "step moved nothing; continuation stopped" _group = :step_control ds = state.ds p = getp(state)
