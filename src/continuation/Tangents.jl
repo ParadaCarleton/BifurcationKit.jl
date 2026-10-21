@@ -107,8 +107,8 @@ function bordered_tangent(state::AbstractContinuationState,
     θ = getθ(iter)
     T = eltype(iter)
 
-    # dFdl = (F(z.u, z.p + ϵ) - F(z.u, z.p)) / ϵ
-    dFdl = R01(FiniteDifferences(), iter.prob, z.u, setparam(iter, z.p))
+    # dFdl = ∂_p F(z.u, z.p)
+    dFdl = _dFdp(iter.prob, z.u, setparam(iter, z.p))
 
     # compute jacobian at the point
     J = jacobian(iter.prob, z.u, setparam(iter, z.p))
