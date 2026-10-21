@@ -108,7 +108,7 @@ module NonlinearSolveExt
         end
         x, p = palc_state(w), w[end]
         par = BK.set(ctx.par, ctx.lens, p)
-        linearization = Linearization(BK._copy(w), BK.jacobian(ctx.prob, x, par), BK.R01(BK.FiniteDifferences(), ctx.prob, x, par))
+        linearization = Linearization(BK._copy(w), BK.jacobian(ctx.prob, x, par), BK._dFdp(ctx.prob, x, par))
         ctx.memo[] = linearization
         return linearization
     end
