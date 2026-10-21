@@ -80,9 +80,17 @@ The dense matrix of the linear system of a [`NonlinearSolveCorrector`](@ref) sol
 """
 function corrector_matrix end
 
-# the corrector of Natural: BifurcationKit's Newton or NonlinearSolve
-_corrector_newton(::Nothing, prob::AbstractBifurcationProblem, x0::Any, params0::Any, options::NewtonPar; kwargs...) = _newton(prob, x0, params0, options; kwargs...)
+# the corrector at fixed parameter (Natural, the first two points of a continuation): NonlinearSolve, else
+# BifurcationKit's Newton, for `nothing` and for a user corrector that defines no method of its own
+_corrector_newton(::Any, prob::AbstractBifurcationProblem, x0::Any, params0::Any, options::NewtonPar; kwargs...) = _newton(prob, x0, params0, options; kwargs...)
 _corrector_newton(corrector::NonlinearSolveCorrector, prob::AbstractBifurcationProblem, x0::Any, params0::Any, options::NewtonPar; kwargs...) = _newton_nonlinearsolve(corrector, prob, x0, params0, options; kwargs...)
+
+"""
+    start_corrector(alg)
+
+The corrector that solves `F(x, p) = 0` at the first two points of a continuation by `alg`, before its first step: the `corrector` of a [`PALC`](@ref) or [`Natural`](@ref), else `nothing` (BifurcationKit's Newton method).
+"""
+start_corrector(::Any) = nothing
 
 """
     _corrector_palc(corrector, iter, state, dotθ; control = nothing, kwargs...)

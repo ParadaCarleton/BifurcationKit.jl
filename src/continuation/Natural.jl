@@ -14,6 +14,7 @@ struct Natural{Tcor} <: AbstractContinuationAlgorithm
     corrector::Tcor
 end
 Natural(bothside::Bool = false; corrector = nothing) = Natural(bothside, corrector)
+start_corrector(alg::Natural) = alg.corrector
 # important for bisection algorithm, switch on / off internal adaptive behavior
 internal_adaptation!(::Natural, ::Bool) = nothing
 

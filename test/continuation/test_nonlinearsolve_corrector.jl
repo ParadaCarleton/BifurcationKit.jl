@@ -89,6 +89,14 @@ opts_bratu = ContinuationPar(
         @test any(diff(br.branch.param) .< 0)
     end
 
+    @testset "the corrector solves the continuation's first two points" begin
+        corrector = NonlinearSolveCorrector(exact)
+        @test isnothing(corrector.fixed_cache[])
+        continuation(prob_bratu, PALC(; corrector), ContinuationPar(opts_bratu; max_steps = 2))
+        # the steps solve the bordered system (`palc_cache`), so the fixed-parameter cache comes from the start alone
+        @test !isnothing(corrector.fixed_cache[])
+    end
+
     @testset "other algorithms stay on the branch" begin
         # a modified Newton method (Jacobian reuse) or a trust region takes other steps: the points still solve F = 0 on the same branch
         for alg in (

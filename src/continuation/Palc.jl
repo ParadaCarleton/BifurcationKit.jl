@@ -118,6 +118,7 @@ getθ(it::ContIterable) = convert(eltype(it), getθ(it.alg))
 
 # important for bisection algorithm, switch on / off internal adaptive behavior
 internal_adaptation!(alg::PALC, on_or_off::Bool) = internal_adaptation!(alg.tangent, on_or_off)
+start_corrector(alg::PALC) = alg.corrector
 
 function Base.empty!(alg::PALC)
     empty!(alg.tangent)

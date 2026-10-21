@@ -396,11 +396,12 @@ function Base.iterate(it::ContIterable; _verbosity = it.verbosity)
         throw("Stopping continuation.")
     end
 
-    # apply Newton algorithm to initial guess
+    # solve the initial guess with the algorithm's corrector (`start_corrector`)
     verbose && printstyled("━"^18*"  INITIAL GUESS   " * "━"^18, bold = true, color = :magenta)
+    corrector = start_corrector(getalg(it))
 
     # we pass additional kwargs to newton so that it is sent to the newton callback
-    sol₀ = solve(prob, Newton(), newton_options; 
+    sol₀ = _corrector_newton(corrector, prob, getu0(prob), getparams(prob), newton_options;
                  normN = it.normC,
                  callback = callback(it),
                  iterationC = 0,
@@ -417,9 +418,7 @@ function Base.iterate(it::ContIterable; _verbosity = it.verbosity)
         printstyled("\n"*"━"^18 * " INITIAL TANGENT  " * "━"^18, bold = true, color = :magenta)
     end
 
-    sol₁ = solve(re_make(prob; params = setparam(it, p₀ + ds / η), u0 = sol₀.u),
-                         Newton(),
-                         newton_options; 
+    sol₁ = _corrector_newton(corrector, prob, sol₀.u, setparam(it, p₀ + ds / η), newton_options;
                          normN = it.normC,
                          callback = callback(it),
                          iterationC = 0,
