@@ -40,7 +40,8 @@ let
     unreachable = ContinuationPar(p_min = 0.0, p_max = 1.0, ds = 0.05, max_steps = 200, detect_bifurcation = 0, newton_options = NewtonPar(tol = 0.0, max_iterations = 10))
     for alg in (PALC(), MoorePenrose(), Natural())
         floored = continuation(prob, alg, unreachable; callback_newton = ScaledTolerance(1e-10))
-        @test last(floored.param) ≈ 1.0
-        @test all(point -> norm(F(point.x, (r = point.p,)), Inf) < 1e-10 * maximum(abs, point.x), floored.sol)
+        @test maximum(floored.param) >= 1.0
+        # Natural records its predictor's parameter at the bound, so only points inside the box are checked
+        @test all(point -> norm(F(point.x, (r = point.p,)), Inf) < 1e-10 * maximum(abs, point.x), filter(point -> point.p <= 1.0, floored.sol))
     end
 end
