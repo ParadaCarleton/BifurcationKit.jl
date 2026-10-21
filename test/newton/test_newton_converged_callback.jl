@@ -36,13 +36,11 @@ let
     @test BK._verdict_and(BK.NewtonConverged(), true) === BK.NewtonConverged()
     @test BK._verdict_and(BK.NewtonConverged(), false) === false
 
-    # the correctors of continuation accept at the callback's verdict
-    contopts = ContinuationPar(p_min = 0.0, p_max = 1.0, ds = 0.05, max_steps = 20, detect_bifurcation = 0, newton_options = NewtonPar(tol = 1e-12))
-    unreachable = ContinuationPar(p_min = 0.0, p_max = 1.0, ds = 0.05, max_steps = 20, detect_bifurcation = 0, newton_options = NewtonPar(tol = 0.0, max_iterations = 10))
+    # a zero `tol` is unreachable: the correctors converge at the callback's verdict only
+    unreachable = ContinuationPar(p_min = 0.0, p_max = 1.0, ds = 0.05, max_steps = 200, detect_bifurcation = 0, newton_options = NewtonPar(tol = 0.0, max_iterations = 10))
     for alg in (PALC(), MoorePenrose(), Natural())
-        reference = continuation(prob, alg, contopts)
         floored = continuation(prob, alg, unreachable; callback_newton = ScaledTolerance(1e-10))
-        @test length(floored) == length(reference)
-        @test floored.param ≈ reference.param rtol = 1e-8
+        @test last(floored.param) ≈ 1.0
+        @test all(point -> norm(F(point.x, (r = point.p,)), Inf) < 1e-10 * maximum(abs, point.x), floored.sol)
     end
 end
