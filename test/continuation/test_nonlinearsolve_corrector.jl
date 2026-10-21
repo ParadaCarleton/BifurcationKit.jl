@@ -67,7 +67,8 @@ opts_bratu = ContinuationPar(
 )
 
 @testset "NonlinearSolveCorrector" begin
-    br_default = continuation(prob_bratu, PALC(), opts_bratu)
+    # BifurcationKit's own Newton method with p left free, as the NonlinearSolve correctors leave it: a step that converges past a bound is corrected at the bound
+    br_reference = continuation(prob_bratu, PALC(; corrector = BK.FreeParameterNewton()), opts_bratu)
 
     exact = NewtonRaphson(; linsolve = LUFactorization(), jacobian_reuse = false)
 
@@ -78,11 +79,11 @@ opts_bratu = ContinuationPar(
             PALC(; corrector = NonlinearSolveCorrector(exact)),
             opts_bratu,
         )
-        @test length(br.sol) == length(br_default.sol)
-        @test maximum(abs, br.branch.param .- br_default.branch.param) < 1.0e-8
+        @test length(br.sol) == length(br_reference.sol)
+        @test maximum(abs, br.branch.param .- br_reference.branch.param) < 1.0e-8
         @test maximum(
             point -> norm(point[1].x - point[2].x, Inf),
-            zip(br.sol, br_default.sol),
+            zip(br.sol, br_reference.sol),
         ) <
             1.0e-8
         # the branch goes beyond the fold, p decreases after it
@@ -106,7 +107,7 @@ opts_bratu = ContinuationPar(
             @test all(point -> norm(F_bratu(point.x, (λ = point.p,)), Inf) < 1.0e-8, br.sol)
             @test any(diff(br.branch.param) .< 0)
             @test maximum(point -> point.p, br.sol) ≈
-                maximum(point -> point.p, br_default.sol) atol = 0.02
+                maximum(point -> point.p, br_reference.sol) atol = 0.02
         end
     end
 
@@ -124,7 +125,7 @@ opts_bratu = ContinuationPar(
         @test all(point -> norm(F_bratu(point.x, (λ = point.p,)), Inf) < 1.0e-8, br.sol)
         @test any(diff(br.branch.param) .< 0)
         @test maximum(point -> point.p, br.sol) ≈
-            maximum(point -> point.p, br_default.sol) atol = 0.02
+            maximum(point -> point.p, br_reference.sol) atol = 0.02
     end
 
     @testset "Newton solve" begin
@@ -279,7 +280,7 @@ opts_bratu = ContinuationPar(
             @test all(point -> norm(F_bratu(point.x, (λ = point.p,)), Inf) < 1.0e-8, br.sol)
             @test any(diff(br.branch.param) .< 0)
             @test maximum(point -> point.p, br.sol) ≈
-                maximum(point -> point.p, br_default.sol) atol = 0.02
+                maximum(point -> point.p, br_reference.sol) atol = 0.02
         end
         @test builds_reused[] < builds_fresh[]
     end
