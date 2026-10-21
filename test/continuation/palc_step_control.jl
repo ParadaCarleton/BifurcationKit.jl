@@ -5,7 +5,7 @@ const BK = BifurcationKit
 # the pure rules of CorrectorQuality
 let
     tol = 1e-8
-    control = CorrectorQuality(max_distance = 0.4)   # Gambit's values: 0.4, 0.6, 1.1, η = 0.1
+    control = CorrectorQuality(max_distance = 0.4)   # Program 1 of Allgower and Georg: dmax = 0.4, ctmax = 0.6, eta = 0.1
     @test (control.max_distance, control.max_contraction, control.max_growth, control.η) == (0.4, 0.6, 1.1, 0.1)
     # the distance test is off unless a threshold is given, the contraction test is on
     @test CorrectorQuality().max_distance === nothing
@@ -100,6 +100,9 @@ let
     # without them ds follows the Newton iteration count, which grows it faster than max_growth
     legacy = continuation(make_problem(Float64), PALC(step_control = nothing, orientation_check = false), options(Float64))
     @test count(sp -> sp.type == :fold, legacy.specialpoint) == 2
+    # the branch passes the sheet between the folds, |u| < 1/√3 (λ = u^3 - u + 1): the long corrector that would jump from
+    # u ≈ -0.92 to the upper sheet has an iterate outside [p_min, p_max], which refuses the step, and a shorter step follows the curve
+    @test any(point -> abs(point.x[1]) < 1 / sqrt(3), legacy.sol)
     legacy_ds = abs.(legacy.branch.ds)
     @test any(legacy_ds[2:(end - 1)] .> 1.1 .* legacy_ds[begin:(end - 2)])
 
@@ -125,25 +128,14 @@ let
         @test all(point -> point.p isa T, br.sol)
         @test count(sp -> sp.type == :fold, br.specialpoint) == 2
     end
+
+    # the step control wraps the Newton callback of continuation, whose refusals still stop the corrector
+    wall(state; fromNewton = true, kwargs...) = fromNewton || state.p <= 1
+    walled = continuation(make_problem(Float64), PALC(step_control = CorrectorQuality(), orientation_check = true), options(Float64); callback_newton = wall)
+    @test all(point -> point.p <= 1, walled.sol)
+    @test maximum(point -> point.p, walled.sol) > 0.9
 end
 ####################################################################################################
-"A user corrector: BifurcationKit's own Newton method, counting its calls mid-path and at the bound."
-struct TestCorrector
-    calls::Dict{Symbol, Int}
-end
-TestCorrector() = TestCorrector(Dict(:palc => 0, :bound => 0))
-BK.measures_quality(::TestCorrector) = true
-function BK._corrector_palc(corrector::TestCorrector, iter::BK.AbstractContinuationIterable, state::BK.AbstractContinuationState, dotθ; kwargs...)
-    corrector.calls[:palc] += 1
-    return BK._newton_palc(iter, state, dotθ; kwargs...)
-end
-function BK._corrector_at_bound(corrector::TestCorrector, iter::BK.AbstractContinuationIterable, state::BK.AbstractContinuationState, dotθ; control = nothing, kwargs...)
-    corrector.calls[:bound] += 1
-    return BK._newton_at_bound(iter, state, dotθ, control; kwargs...)
-end
-"A corrector that does not report the lengths of its Newton steps."
-struct UnmeasuredCorrector end
-
 # orientation_check: determinant orientation of a Bordered tangent, rejection on a negative dot product
 let
     F(u, p) = @. u^2 + p.λ^2 - 1
@@ -160,7 +152,7 @@ let
     state.z = point(φ0)
     state.τ = unit_tangent(φ0)
     state.ds = 0.3
-    state.orientation = 1
+    state.cache = BK._update(state.cache; orientation = 1)
     # the determinant orientation is that of the curve, the same on both sides of a quarter turn, where alignment with the previous tangent
     # would reverse it
     for φ in (φ0 + 0.4, φ0 + 2.0, φ0 - 2.0)
@@ -174,10 +166,10 @@ let
         @test next.u ≈ oriented.u
     end
     # the orientation sign flips the whole field
-    state.orientation = -1
+    state.cache = BK._update(state.cache; orientation = -1)
     @test BK.bordered_tangent(state, iter, point(φ0 + 0.4), dotθ; by_determinant = true).p ≈ -unit_tangent(φ0 + 0.4).p rtol = 1e-6
     # a Secant tangent is the chord: its cosine is that of consecutive chords, and the sign of ds is the direction
-    state.orientation = 1
+    state.cache = BK._update(state.cache; orientation = 1)
     for ds in (0.3, -0.3)
         state.ds = ds
         cosine, next = BK.turn_cosine(Secant(), state, iter, point(φ0 + sign(ds) * 0.4), dotθ)
@@ -203,7 +195,7 @@ let
             state = iterate(iter)[1]
             state.z = point(φ0)
             state.τ = unit_tangent(φ0)
-            state.orientation = 1
+            state.cache = BK._update(state.cache; orientation = 1)
             state.z_pred = far
             state.ds = dotθ(far.u .- state.z.u, state.τ.u, far.p - state.z.p, state.τ.p, 0.5)
             BK.corrector!(state, iter, alg)
@@ -219,7 +211,7 @@ let
         state = iterate(iter)[1]
         state.z = point(φ1)
         state.τ = unit_tangent(φ1)
-        state.orientation = 1
+        state.cache = BK._update(state.cache; orientation = 1)
         state.z_pred = z_pred
         state.ds = 0.3
         BK.corrector!(state, iter, alg)
@@ -245,14 +237,13 @@ let
         @test BK.converged(bounded_state(alg, on_branch)) == accepted
     end
 
-    # a user corrector is tested like BifurcationKit's own, mid-path and at the bound, from the quality it returns
-    corrector = TestCorrector()
-    custom(; keywords...) = PALC(; tangent = Bordered(), corrector, keywords...)
+    # FreeParameterNewton is tested like BifurcationKit's own corrector, mid-path and at the bound, through the Newton callback
+    custom(; keywords...) = PALC(; tangent = Bordered(), corrector = FreeParameterNewton(), keywords...)
     midpath_state(alg, z_pred) = let iter = ContIterable(prob, alg, options)
         state = iterate(iter)[1]
         state.z = point(φ0)
         state.τ = unit_tangent(φ0)
-        state.orientation = 1
+        state.cache = BK._update(state.cache; orientation = 1)
         state.z_pred = z_pred
         state.ds = dotθ(z_pred.u .- state.z.u, state.τ.u, z_pred.p - state.z.p, state.τ.p, 0.5)
         BK.corrector!(state, iter, alg)
@@ -269,33 +260,41 @@ let
         @test BK.converged(midpath_state(custom(; step_control = CorrectorQuality(; max_distance)), near)) == accepted
         @test BK.converged(bounded_state(custom(; step_control = CorrectorQuality(; max_distance)), on_branch)) == accepted
     end
-    @test corrector.calls[:palc] == 4
-    @test corrector.calls[:bound] == 6
 
-    # a corrector from an interior predictor that converges past p_max is corrected at p_max from where it
-    # ended: below the centre of the circle the corrector raises λ beyond a predictor that lies short of p_max.
-    # Only a corrector that leaves p free gets there; BifurcationKit's Newton method clamps p into the box
+    # a corrector whose solution lies past p_max: BifurcationKit's Newton method stops on its iterate past p_max, not
+    # converged, before F is evaluated there, and the step is refused. A corrector that leaves p free converges there and
+    # is corrected again at p_max from where it ended. Below the centre of the circle the corrector raises λ beyond a
+    # predictor that lies short of p_max
     φ2 = -π / 6
     along = 0.4
     predicted = BorderedArray(point(φ2).u .- along * sin(φ2), point(φ2).p + along * cos(φ2))
     past_options = ContinuationPar(options; p_max = -0.148)
     @test predicted.p < past_options.p_max < sin(φ2 + atan(along))
-    for past_corrector in (NonlinearSolveCorrector(NewtonRaphson()),)
-        alg = PALC(; tangent = Bordered(), corrector = past_corrector)
-        iter = ContIterable(prob, alg, past_options)
+    function F_inside(u, p)
+        if p.λ > -0.148
+            error("F evaluated past p_max")
+        end
+        return F(u, p)
+    end
+    past_state(alg, problem) = let iter = ContIterable(problem, alg, past_options)
         state = iterate(iter)[1]
         state.z = point(φ2)
         state.τ = unit_tangent(φ2)
-        state.orientation = 1
+        state.cache = BK._update(state.cache; orientation = 1)
         state.z_pred = predicted
         state.ds = dotθ(predicted.u .- state.z.u, state.τ.u, predicted.p - state.z.p, state.τ.p, 0.5)
         BK.corrector!(state, iter, alg)
+        state
+    end
+    state = past_state(PALC(; tangent = Bordered()), BifurcationProblem(F_inside, [sqrt(0.75)], (λ = -0.5,), (@optic _.λ)))
+    @test ~BK.converged(state)
+    @test state.z.p == point(φ2).p
+    for past_corrector in (FreeParameterNewton(), NonlinearSolveCorrector(NewtonRaphson()))
+        state = past_state(PALC(; tangent = Bordered(), corrector = past_corrector), prob)
         @test BK.converged(state)
         @test state.z.p == -0.148
         @test state.z.u[1] ≈ sqrt(1 - 0.148^2) rtol = 1e-8
     end
-    # a corrector that does not return its quality cannot take step control
-    @test_throws AssertionError PALC(; corrector = UnmeasuredCorrector(), step_control = CorrectorQuality(; max_distance = 1.0))
 end
 ####################################################################################################
 # a step under the state's floating-point resolution moves nothing: the continuation stops at the

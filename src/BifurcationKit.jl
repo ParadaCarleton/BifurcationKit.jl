@@ -129,6 +129,7 @@ module BifurcationKit
     # wave problem
     include("wave/WaveProblem.jl")
     include("wave/EigSolver.jl")
+    include("wave/codim2.jl")
 
     # plotting
     include("plotting/Utils.jl")
@@ -137,6 +138,8 @@ module BifurcationKit
     include("Diffeqwrap.jl")
 
     function save_to_file end
+    save_to_file(iter, sol, p, i, br) = error("`save_to_file` requires the JLD2 extension. Run `using JLD2` to enable saving branches to file.")
+    save_to_file(iter, br) = error("`save_to_file` requires the JLD2 extension. Run `using JLD2` to enable saving branches to file.")
 
     # linear solvers
     export norminf
@@ -166,7 +169,7 @@ module BifurcationKit
 
     # newton methods
     export NewtonPar, Newton, newton, newton_palc, newton_hopf, NonLinearSolution
-    export NonlinearSolveCorrector
+    export NonlinearSolveCorrector, FreeParameterNewton
 
     # continuation methods
     export ContinuationPar, ContResult, continuation, continuation!, continuation_fold, continuation_hopf, continuation_potrap, eigenvec, eigenvals, get_solx, get_solp, bifurcation_points, SpecialPoint
@@ -187,7 +190,7 @@ module BifurcationKit
     export get_normal_form, hopf_normal_form, predictor, normal_form
 
     # automatic bifurcation diagram
-    export bifurcationdiagram, bifurcationdiagram!, Branch, BifDiagNode, get_branch, get_branches_from_BP
+    export bifurcationdiagram, bifurcationdiagram!, Branch, BifDiagNode, get_branch, get_branches_from_BP, getbranches
 
     # Periodic orbit computation
     export generate_solution, getperiod, get_periodic_orbit, guess_from_hopf, generate_ci_problem
