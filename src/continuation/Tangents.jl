@@ -189,12 +189,6 @@ function turn_cosine(::Bordered, state::AbstractContinuationState, iter::Abstrac
     return dt(τ.u, τnew.u, τ.p, τnew.p, θ) / (dt(τ, θ) * dt(τnew, θ)), τnew
 end
 
-"""
-$(TYPEDSIGNATURES)
-
-Cosine, in the norm of `dt`, of the angle between the direction of travel `sign(ds) τ` and the chord from `state.z` to `znew`. It needs no new tangent.
-"""
-chord_turn_cosine(state::AbstractContinuationState, iter::AbstractContinuationIterable, znew::BorderedArray, dt::DotTheta) = sign(state.ds) * chord_cosine(dt, state.τ, state.z, znew, getθ(iter))
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
     Polynomial Tangent predictor

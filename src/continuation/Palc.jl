@@ -46,16 +46,27 @@ _get_apply_dot(dt::DotTheta) = dt.apply!
 """
 $(TYPEDSIGNATURES)
 
-Cosine, in the norm of `dt`, of the angle between the tangent `τ` at `z` and the chord from `z` to `znew`. An empty chord has cosine 1: it does not turn.
+Projection `<znew - z, τ>` of the chord from `z` to `znew` on the tangent `τ`, and the length of the chord, in the norm of `dt`.
 """
-function chord_cosine(dt::DotTheta, τ::BorderedArray, z::BorderedArray, znew::BorderedArray, θ::Real)
+function chord_projection(dt::DotTheta, τ::BorderedArray, z::BorderedArray, znew::BorderedArray, θ::Real)
     Δ = _copy(znew)
     Δ = VI.add!!(Δ, z, -one(θ))
-    length_chord = dt(Δ.u, Δ.p, θ)
-    if iszero(length_chord)
-        return one(length_chord)
+    return dt(τ.u, Δ.u, τ.p, Δ.p, θ), dt(Δ.u, Δ.p, θ)
+end
+
+"""
+$(TYPEDSIGNATURES)
+
+Cosine, in the norm of `dt`, of the angle between the tangent `τ` at `z` and the chord from `z` to `znew`. An empty chord has cosine 1: it does not turn.
+"""
+chord_cosine(dt::DotTheta, τ::BorderedArray, z::BorderedArray, znew::BorderedArray, θ::Real) = chord_cosine(chord_projection(dt, τ, z, znew, θ)..., dt(τ.u, τ.p, θ))
+
+"Cosine of the angle between a tangent of length `tangent_length` and a chord of length `chord_length` whose projection on it is `along`."
+function chord_cosine(along::Real, chord_length::Real, tangent_length::Real)
+    if iszero(chord_length)
+        return one(chord_length)
     end
-    return dt(τ.u, Δ.u, τ.p, Δ.p, θ) / (dt(τ.u, τ.p, θ) * length_chord)
+    return along / (tangent_length * chord_length)
 end
 
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -79,7 +90,7 @@ $(TYPEDEF)
 
 Pseudo-arclength continuation algorithm.
 
-The orientation test `orientation_check` is on by default, for every tangent and bordered solver. Every step first takes the chord test: the chord to the new point against the direction of travel, one dot product. A `Bordered` tangent with a `MatrixBLS` solver then takes the determinant test, read from the LU factorisation that solves for the new tangent; it also detects a corrector that converged onto a nearby part of the curve that runs the other way. With another bordered solver the determinant needs a dense bordered matrix that the solver does not form, so the chord test is the only one.
+The orientation test `orientation_check` is on by default and applies to a `Bordered` tangent with a `MatrixBLS` solver: the tangent at the new point is oriented by the sign of the determinant of the bordered matrix, read from the LU factorisation that solves for it, and a step whose new tangent points against the previous one is rejected, as when the corrector converged onto a nearby part of the curve that runs the other way. The determinant changes sign at a simple branch point, so crossing one costs about `log2(dsmax / dsmin)` rejected steps: a step that the determinant test refuses at `dsmin` is assumed to straddle a branch point and is taken with the orientation flipped.
 
 Additional information is available on the [website](https://bifurcationkit.github.io/BifurcationKitDocs.jl/dev/PALC/).
 
@@ -101,7 +112,7 @@ $(TYPEDFIELDS)
     dotθ::Tdot = DotTheta()
     "Step control by the quality of the corrector, a [`CorrectorQuality`](@ref) or `nothing` (the default). With `nothing`, `ds` is controlled by the number of Newton iterations, see the parameter `a` of [`ContinuationPar`](@ref)."
     step_control::Tctl = nothing
-    "Orientation test, on by default. Every step first takes the chord test: a step whose chord from the previous point has a negative dot product with the direction of travel `sign(ds) τ` is rejected, with no new tangent computed. A `Bordered` tangent with a `MatrixBLS` solver then takes the determinant test: its tangent at the new point is oriented as the curve is, by the sign of the determinant of the bordered matrix `[J dFdl; τ']` (Allgower and Georg, *Introduction to Numerical Continuation Methods*, definition (2.1.7)), with the sign fixed to the direction of travel at the start, and the step is rejected when that tangent has a negative dot product with the previous one, as when the corrector converged onto a nearby part of the curve that runs the other way. The sign is read from the LU factorisation that solves for the new tangent. With another bordered solver the chord test is the only one; the solver is read when the test runs, so it follows `@set alg.bls = ...`."
+    "Orientation test, on by default. It applies to a `Bordered` tangent with a `MatrixBLS` solver, read when the test runs (so it follows `@set alg.bls = ...`). The tangent at the new point is oriented as the curve is, by the sign of the determinant of the bordered matrix `[J dFdl; τ']` (Allgower and Georg, *Introduction to Numerical Continuation Methods*, definition (2.1.7)), with the sign fixed to the direction of travel at the start and read from the LU factorisation that solves for the tangent. A step whose new tangent has a negative dot product with the previous one is rejected, as when the corrector converged onto a nearby part of the curve that runs the other way. At a simple branch point the determinant changes sign: `ds` is halved down to `dsmin`, about `log2(dsmax / dsmin)` rejected steps, and a step refused at `dsmin` is assumed to straddle a branch point and is taken with the orientation sign negated."
     orientation_check::Bool = true
 
     @assert ~(tangent isa Constant) "You cannot use a constant predictor with PALC"
@@ -294,7 +305,8 @@ function (check::PALCStepCheck)(newton_state; kwargs...)
     if verdict === false || (verdict === true && newton_state.residual >= check.tol)
         return verdict
     end
-    if ~_turns_forward!(check, BorderedArray(newton_state.x, p))
+    # newton_palc, which imposes the arc length constraint, passes `p`; the Natural corrector at a parameter bound holds `p` fixed
+    if ~_turns_forward!(check, BorderedArray(newton_state.x, p), haskey(newton_state, :p))
         return false
     end
     return verdict
@@ -333,29 +345,37 @@ _rejects_turn(control::CorrectorQuality, turn) = rejects_turn(control, turn)
 _observe_turn(::Nothing, quality, turn) = quality
 _observe_turn(control::CorrectorQuality, quality, turn) = observe_turn(control, quality, turn)
 
-function _turns_forward!(check::PALCStepCheck, znew::BorderedArray)
+function _turns_forward!(check::PALCStepCheck, znew::BorderedArray, on_arc::Bool)
     alg = check.alg
     if ~tracks_turn(alg)
         return true
     end
     state = check.state
-    # the chord test needs no new tangent; the determinant test follows only for a chord that points forward
-    chord = chord_turn_cosine(state, check.iter, znew, getdot(alg))
-    if alg.orientation_check && chord < 0
-        if check.iter.verbosity > 0
-            printstyled("Step rejected: the chord to the new point points away from the previous tangent (cosine $chord)\n", color = :red)
-        end
-        return false
+    dt, θ = getdot(alg), getθ(check.iter)
+    along, chord_length = chord_projection(dt, state.τ, state.z, znew, θ)
+    # newton_palc converges only when the arc length residual <znew - z, τ> - ds is below tol
+    if on_arc
+        @assert sign(state.ds) * along >= -check.tol "the arc length constraint <znew - z, τ> = ds makes the chord of a converged step point forward, but sign(ds) <znew - z, τ> = $(sign(state.ds) * along)"
     end
-    cosine, next_tangent = chord, nothing
     if orients_by_determinant(alg)
-        cosine, next_tangent = turn_cosine(alg.tangent, state, check.iter, znew, getdot(alg))
-    end
-    if alg.orientation_check && cosine < 0
-        if check.iter.verbosity > 0
-            printstyled("Step rejected: the new tangent points away from the previous one (dot product $cosine)\n", color = :red)
+        cosine, next_tangent = turn_cosine(alg.tangent, state, check.iter, znew, dt)
+        if alg.orientation_check && cosine < 0
+            if abs(state.ds) > check.iter.contparams.dsmin
+                if check.iter.verbosity > 0
+                    printstyled("Step rejected: the new tangent points away from the previous one (dot product $cosine)\n", color = :red)
+                end
+                return false
+            end
+            # at the smallest step the refusal is taken as a branch point crossing, where the determinant changes sign
+            if check.iter.verbosity > 0
+                printstyled("Orientation flipped at dsmin: taking the step as a branch point crossing\n", color = :red)
+            end
+            state.cache = _update(state.cache; orientation = -state.cache.orientation)
+            VI.scale!(next_tangent, -one(cosine))
+            cosine = -cosine
         end
-        return false
+    else
+        cosine, next_tangent = sign(state.ds) * chord_cosine(along, chord_length, dt(state.τ, θ)), nothing
     end
     turn = acos(clamp(cosine, -one(cosine), one(cosine)))
     if _rejects_turn(check.control, turn)

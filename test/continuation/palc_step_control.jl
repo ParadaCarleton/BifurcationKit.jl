@@ -82,7 +82,7 @@ let
     options(T; ds = 0.05, dsmax = 0.5) = ContinuationPar(ds = T(ds), dsmin = T(1e-6), dsmax = T(dsmax), a = T(0.5), p_min = zero(T), p_max = T(2), η = T(150), tol_stability = T(1e-10), dsmin_bisection = T(1e-16), tol_bisection_eigenvalue = T(1e-16), tol_param_bisection_event = T(1e-16), max_steps = 200, detect_fold = true, detect_bifurcation = 0, newton_options = NewtonPar(tol = sqrt(eps(T))))
 
     # step_control is off by default; orientation_check is on for every tangent and bordered solver, and the determinant
-    # test follows the chord test only for a Bordered tangent with MatrixBLS
+    # test runs only for a Bordered tangent with MatrixBLS
     @test PALC().step_control === nothing
     for tangent in (Secant(), Bordered(), Polynomial(Bordered(), 2, 6, rand(1))), bls in (MatrixBLS(), BorderingBLS(), MatrixFreeBLS())
         alg = PALC(; tangent, bls)
@@ -205,12 +205,18 @@ let
     # the orientation sign flips the whole field
     state.cache = BK._update(state.cache; orientation = -1)
     @test BK.bordered_tangent(state, iter, point(φ0 + 0.4), dotθ; by_determinant = true).p ≈ -unit_tangent(φ0 + 0.4).p rtol = 1e-6
-    # the chord test compares the direction of travel sign(ds) τ with the chord to the new point
+    # an ordinary converged step meets the arc length constraint, so its chord points along the direction of travel
     state.cache = BK._update(state.cache; orientation = 1)
     for ds in (0.3, -0.3)
-        state.ds = ds
-        @test BK.chord_turn_cosine(state, iter, point(φ0 + sign(ds) * 0.4), dotθ) ≈ cos(0.2) rtol = 1e-6
-        @test BK.chord_turn_cosine(state, iter, point(φ0 - sign(ds) * 0.4), dotθ) ≈ -cos(0.2) rtol = 1e-6
+        landing = point(φ0 + sign(ds) * 0.4)
+        state.z = point(φ0)
+        state.τ = unit_tangent(φ0)
+        state.z_pred = landing
+        state.ds = dotθ(landing.u .- state.z.u, state.τ.u, landing.p - state.z.p, state.τ.p, 0.5)
+        start = point(φ0)
+        BK.corrector!(state, iter, PALC(; tangent = Bordered(), orientation_check = true))
+        @test BK.converged(state)
+        @test sign(state.ds) * first(BK.chord_projection(dotθ, state.τ, start, state.z, 0.5)) >= -options.newton_options.tol
     end
 
     # the start sets the sign of the orientation to the direction of travel, whichever way ds points
@@ -223,8 +229,8 @@ let
         @test continuation(prob, PALC(; tangent), ContinuationPar(options; ds)).branch.param ≈ checked.branch.param
     end
 
-    # a Bordered tangent with a bordered solver other than MatrixBLS takes the chord test only: on the curve it accepts
-    # every converged PALC step, with the default, an explicit check, or the solver passed to continuation
+    # a Bordered tangent with a bordered solver other than MatrixBLS runs no determinant test: it accepts every converged
+    # PALC step, with the default, an explicit check, or the solver passed to continuation
     bordering = BorderingBLS(solver = DefaultLS(), check_precision = false)
     unchecked = continuation(prob, PALC(; tangent = Bordered(), bls = bordering, orientation_check = false), options)
     for checked in (continuation(prob, PALC(; tangent = Bordered(), bls = bordering), options),
@@ -306,21 +312,30 @@ let
         @test state.z.p == 0.7
         @test state.z.u[1] ≈ sqrt(1 - 0.7^2)
     end
-    # with ds < 0 the landing on the branch ahead has a backward chord: the chord test refuses it, where the determinant
-    # orientation alone would accept it, and leaves no tangent for the next predictor
-    for check in (true, false)
-        @test BK.converged(bounded_state(PALC(; tangent = Bordered(), orientation_check = check), on_branch; ds = -0.3)) == ~check
-    end
-    @test isnothing(bounded_state(PALC(; tangent = Bordered(), orientation_check = true), on_branch; ds = -0.3).next_tangent)
     # an accepted step hands its determinant-oriented tangent to the next predictor
     @test ~isnothing(bounded_state(PALC(; tangent = Bordered(), orientation_check = true), on_branch).next_tangent)
-    # with BorderingBLS the chord test runs alone: it refuses the backward chord, keeps no tangent, and accepts the landing
-    # past the top of the circle, whose chord points forward, where only the determinant sees the way back
+    # with BorderingBLS no tangent is handed on, and the landing past the top of the circle is accepted: only the
+    # determinant sees the way back
     bordering_alg = PALC(; tangent = Bordered(), bls = BorderingBLS(solver = DefaultLS(), check_precision = false))
-    @test ~BK.converged(bounded_state(bordering_alg, on_branch; ds = -0.3))
     @test BK.converged(bounded_state(bordering_alg, on_branch))
     @test isnothing(bounded_state(bordering_alg, on_branch).next_tangent)
     @test BK.converged(bounded_state(bordering_alg, over_the_top))
+    # at dsmin a determinant refusal is taken as a branch point crossing: the step is accepted, the orientation sign and the
+    # handed-on tangent are negated; one step above dsmin it is still refused
+    dsmin = bound_options.dsmin
+    over = π - asin(0.7)
+    for (ds, crosses) in ((dsmin, true), (2dsmin, false))
+        state = bounded_state(PALC(; tangent = Bordered()), over_the_top; ds)
+        @test BK.converged(state) == crosses
+        @test state.cache.orientation == ifelse(crosses, -1, 1)
+        if crosses
+            @test state.next_tangent.u ≈ -unit_tangent(over).u rtol = 1e-6
+            @test state.next_tangent.p ≈ -unit_tangent(over).p rtol = 1e-6
+        end
+    end
+    # without orientation_check a max_turn sees the determinant tangent unflipped, and refuses the turn at dsmin too
+    turn_limited = PALC(; tangent = Bordered(), orientation_check = false, step_control = CorrectorQuality(; max_turn = 1.0, max_distance = nothing, max_contraction = nothing))
+    @test ~BK.converged(bounded_state(turn_limited, over_the_top; ds = dsmin))
     # the distance test refuses a Newton step that is long
     for (max_distance, accepted) in ((1e-3, false), (1.0, true))
         alg = PALC(; tangent = Bordered(), step_control = CorrectorQuality(; max_distance))
@@ -352,5 +367,21 @@ let
         BK.corrector!(state, iter, alg)
         @test ~BK.converged(state)
         @test state.z.p == point(φ2).p
+    end
+end
+####################################################################################################
+# a simple branch point on the trivial branch of a pitchfork: the bordered determinant is λ (1 - θ), so the determinant
+# orientation flips at λ = 0; the default orientation_check crosses it at dsmin and reaches p_max
+let
+    F(u, p) = @. u * (p.λ - u^2)
+    prob = BifurcationProblem(F, [0.0], (λ = -0.5,), (@optic _.λ))
+    options = ContinuationPar(ds = 0.05, dsmin = 1e-4, dsmax = 0.1, p_min = -1.0, p_max = 0.5, max_steps = 500, detect_fold = false, detect_bifurcation = 0, newton_options = NewtonPar(tol = 1e-10))
+    for alg in (PALC(; tangent = Bordered()), PALC(; tangent = Bordered(), orientation_check = false))
+        br = continuation(prob, alg, options)
+        @test alg.bls isa MatrixBLS
+        @test br.branch.param[end] ≈ options.p_max
+        @test all(diff(br.branch.param) .> 0)
+        @test any(λ -> abs(λ) < 1e-2, br.branch.param)
+        @test all(point -> abs(point.x[1]) < 1e-8, br.sol)
     end
 end
