@@ -206,7 +206,7 @@ let
 
     # the start sets the sign of the orientation to the direction of travel, whichever way ds points
     for ds in (0.3, -0.3), tangent in (Secant(), Bordered())
-        plain = continuation(prob, PALC(; tangent), ContinuationPar(options; ds))
+        plain = continuation(prob, PALC(; tangent, orientation_check = false), ContinuationPar(options; ds))
         checked = continuation(prob, PALC(; tangent, orientation_check = true), ContinuationPar(options; ds))
         @test checked.branch.param ≈ plain.branch.param rtol = 1e-10
         @test length(checked.branch) == 31
