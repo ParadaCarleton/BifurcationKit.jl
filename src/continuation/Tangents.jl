@@ -70,27 +70,42 @@ _shortname(::PALC{Bordered}) = "PALC [Bordered]"
 """
 $(TYPEDSIGNATURES)
 
-Whether the `Bordered` tangents of `iter` are oriented by the determinant of the bordered matrix (`PALC` with `orientation_check` or a `max_turn`).
+Whether the `Bordered` tangents of `alg` are oriented by the determinant of the bordered matrix, read from its current `tangent` and `bls`. With `MatrixBLS` it is for the orientation test or a `max_turn`. With another bordered solver it is only for a `max_turn`, which needs that determinant and errors in [`bordered_tangent_and_sign`](@ref).
 """
-orients_by_determinant(iter::AbstractContinuationIterable) = iter.alg isa PALC && tracks_turn(iter.alg)
+orients_by_determinant(alg::PALC) = _orients_by_determinant(alg.tangent, alg.bls, alg)
+orients_by_determinant(iter::AbstractContinuationIterable) = iter.alg isa PALC && orients_by_determinant(iter.alg)
+_orients_by_determinant(::Bordered, ::MatrixBLS, alg::PALC) = tracks_turn(alg)
+_orients_by_determinant(::Bordered, ::AbstractBorderedLinearSolver, alg::PALC) = ~isnothing(_turn_limit(alg.step_control))
+_orients_by_determinant(::AbstractTangentComputation, ::AbstractLinearSolver, ::PALC) = false
 
 """
 $(TYPEDSIGNATURES)
 
-The sign of the determinant of the bordered matrix of the tangent, `[J dFdl; θ τ.u' (1 - θ) τ.p]` with `τ = state.τ`, built as `MatrixBLS` builds it. It needs a `MatrixBLS` solver and costs a dense LU factorisation, `O(n^3)` for `n` unknowns.
+Solve the bordered system of the tangent with the bordered matrix built as [`MatrixBLS`](@ref) builds it, and return `(τu, τp, s)` with `s` the sign of the determinant of that matrix. One LU factorisation gives both.
 """
-function bordered_determinant_sign(::MatrixBLS, iter::AbstractContinuationIterable, state::AbstractContinuationState, J, dFdl)
+function bordered_tangent_and_sign(::MatrixBLS, iter::AbstractContinuationIterable, state::AbstractContinuationState, J, dFdl, rhsu, rhsp::𝒯) where {𝒯}
     θ = getθ(iter)
-    τ = state.τ
-    A = vcat(hcat(getmatrix(J), dFdl), hcat(LA.adjoint(τ.u .* θ), τ.p * (one(θ) - θ)))
-    apply = _get_apply_dot(getdot(iter))
-    if ~isnothing(apply)
-        apply(@view(A[end, begin:end-1]))
-    end
-    return last(LA.logabsdet(A))
+    A = bordered_matrix(J, dFdl, state.τ.u, state.τ.p, θ, one(𝒯) - θ, _get_apply_dot(getdot(iter)))
+    F = LA.lu(A)
+    res = F \ vcat(rhsu, rhsp)
+    return (@view res[begin:end-1]), res[end], determinant_sign(F)
 end
 
-bordered_determinant_sign(lbs::AbstractBorderedLinearSolver, ::AbstractContinuationIterable, ::AbstractContinuationState, J, dFdl) = error("orientation_check orients a Bordered tangent by a determinant, which only MatrixBLS gives, not $(typeof(lbs))")
+bordered_tangent_and_sign(lbs::AbstractBorderedLinearSolver, ::AbstractContinuationIterable, ::AbstractContinuationState, J, dFdl, rhsu, rhsp) = error("max_turn orients a Bordered tangent by a determinant, which only MatrixBLS gives, not $(typeof(lbs))")
+
+"""
+$(TYPEDSIGNATURES)
+
+The sign of the determinant of the factorised matrix: the product of the signs of the pivots times the parity of the row permutation.
+"""
+function determinant_sign(F::LA.LU)
+    s = prod(sign, @view F.factors[LA.diagind(F.factors)])
+    swaps = count(row != i for (i, row) in pairs(F.ipiv))
+    return isodd(swaps) ? -s : s
+end
+
+# a sparse matrix is factorised by UMFPACK, which gives the determinant from its factors
+determinant_sign(F::LA.Factorization) = last(LA.logabsdet(F))
 
 """
 $(TYPEDSIGNATURES)
@@ -114,17 +129,19 @@ function bordered_tangent(state::AbstractContinuationState,
     J = jacobian(iter.prob, z.u, setparam(iter, z.p))
 
     # extract tangent as solution of the above bordered linear system
-    τu, τp, flag, iterl = solve_bls_palc(get_bordered_linsolver(iter),
-                                        iter, state,
-                                        J, dFdl,
-                                        VI.zerovector(z.u), 
-                                        one(T)) # Right-hand side
-    ~flag && @warn "Linear solver failed to converge in tangent computation with type ::Bordered"
+    lbs = get_bordered_linsolver(iter)
+    rhsu = VI.zerovector(z.u) # Right-hand side
+    if by_determinant
+        τu, τp, determinant = bordered_tangent_and_sign(lbs, iter, state, J, dFdl, rhsu, one(T))
+    else
+        τu, τp, flag, iterl = solve_bls_palc(lbs, iter, state, J, dFdl, rhsu, one(T))
+        ~flag && @warn "Linear solver failed to converge in tangent computation with type ::Bordered"
+    end
 
     # we scale τ in order to have ||τ||_θ = 1 and sign <τ, τold> = 1
     α = one(T) / sqrt(dotθ(τu, τu, τp, τp, θ))
     if by_determinant
-        α *= bordered_determinant_sign(get_bordered_linsolver(iter), iter, state, J, dFdl) * state.cache.orientation
+        α *= determinant * state.cache.orientation
     else
         α *= sign(dotθ(τ.u, τu, τ.p, τp, θ))
     end
@@ -140,7 +157,8 @@ function gettangent!(state::AbstractContinuationState,
                     iter::AbstractContinuationIterable,
                     ::Bordered, 
                     dotθ)
-    τ = bordered_tangent(state, iter, state.z, dotθ; by_determinant = orients_by_determinant(iter))
+    # a bisection crosses its special point back and forth, and the determinant orientation flips at a branch point
+    τ = bordered_tangent(state, iter, state.z, dotθ; by_determinant = orients_by_determinant(iter) && ~in_bisection(state))
     _copyto!(state.τ.u, τ.u)
     state.τ.p = τ.p
     return state.τ
@@ -148,7 +166,7 @@ end
 """
 $(TYPEDSIGNATURES)
 
-Set the orientation sign of the `PALCCache` so that the determinant orientation of a `Bordered` tangent at the start points along the secant tangent `state.τ`, the direction of travel. Called at the start of a continuation with `orientation_check`; the method for other tangents returns `state`.
+Set the orientation sign of the `PALCCache` so that the determinant orientation of a `Bordered` tangent at the start points along the secant tangent `state.τ`, the direction of travel. Called at the start of a continuation whose tangents are oriented by the determinant ([`orients_by_determinant`](@ref)).
 """
 function init_orientation_check!(state::AbstractContinuationState, iter::AbstractContinuationIterable, alg::PALC{<:Bordered})
     state.cache = _update(state.cache; orientation = 1)
@@ -160,12 +178,10 @@ function init_orientation_check!(state::AbstractContinuationState, iter::Abstrac
     return state
 end
 
-init_orientation_check!(state::AbstractContinuationState, ::AbstractContinuationIterable, ::PALC) = state
-
 """
 $(TYPEDSIGNATURES)
 
-Cosine, in the norm of `dt`, of the angle between the tangent at `state.z` and the tangent at `znew`, and the new tangent when this computed it (`nothing` otherwise). A `Bordered` predictor computes the tangent at `znew` oriented by the determinant (and the next predictor takes it). Any other predictor compares the direction of travel `sign(ds) τ` with the chord to `znew`, which stands for the new tangent.
+Cosine, in the norm of `dt`, of the angle between the tangent at `state.z` and the `Bordered` tangent at `znew` oriented by the determinant, and that new tangent (the next predictor takes it).
 """
 function turn_cosine(::Bordered, state::AbstractContinuationState, iter::AbstractContinuationIterable, znew::BorderedArray, dt::DotTheta)
     τ = state.τ
@@ -174,9 +190,6 @@ function turn_cosine(::Bordered, state::AbstractContinuationState, iter::Abstrac
     return dt(τ.u, τnew.u, τ.p, τnew.p, θ) / (dt(τ, θ) * dt(τnew, θ)), τnew
 end
 
-function turn_cosine(::AbstractTangentComputation, state::AbstractContinuationState, iter::AbstractContinuationIterable, znew::BorderedArray, dt::DotTheta)
-    return sign(state.ds) * chord_cosine(dt, state.τ, state.z, znew, getθ(iter)), nothing
-end
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
     Polynomial Tangent predictor

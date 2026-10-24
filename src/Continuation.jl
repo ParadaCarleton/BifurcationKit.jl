@@ -181,7 +181,7 @@ Base.@kwdef mutable struct ContState{Tv, T, Teigvals, Teigvec, Tcb, Tcache} <: A
     stopcontinuation::Bool = false
     "perform step size adaptation."
     stepsizecontrol::Bool = true
-    "tangent at the new solution, which the corrector computed for the orientation test (`PALC` with `orientation_check` and a `Bordered` tangent). The next predictor takes it. `nothing` otherwise."
+    "tangent at the new solution, which the corrector computed for the orientation test (`PALC` with a `Bordered` tangent oriented by the determinant). The next predictor takes it. `nothing` otherwise."
     next_tangent::Union{Nothing, Tv} = nothing
     "data of the continuation algorithm that persists across steps, for example a [`PALCCache`](@ref), or `nothing`."
     cache::Tcache = nothing
