@@ -81,16 +81,26 @@ let
     make_problem(T) = BifurcationProblem(F, T[-1.3247179], (λ = zero(T),), (@optic _.λ))
     options(T; ds = 0.05, dsmax = 0.5) = ContinuationPar(ds = T(ds), dsmin = T(1e-6), dsmax = T(dsmax), a = T(0.5), p_min = zero(T), p_max = T(2), η = T(150), tol_stability = T(1e-10), dsmin_bisection = T(1e-16), tol_bisection_eigenvalue = T(1e-16), tol_param_bisection_event = T(1e-16), max_steps = 200, detect_fold = true, detect_bifurcation = 0, newton_options = NewtonPar(tol = sqrt(eps(T))))
 
-    # step_control is off by default, orientation_check is on for a Secant tangent only
+    # step_control is off by default; orientation_check is on for a Secant tangent and for a Bordered tangent with MatrixBLS
     @test PALC().step_control === nothing
-    @test BK.checks_orientation(PALC())
-    @test ~BK.checks_orientation(PALC(tangent = Bordered()))
-    # with the default the test follows the tangent, also when it is changed with @set
+    for bls in (MatrixBLS(), BorderingBLS(), MatrixFreeBLS())
+        @test BK.checks_orientation(PALC(; bls))
+    end
+    @test BK.checks_orientation(PALC(tangent = Bordered()))
+    @test ~BK.checks_orientation(PALC(tangent = Bordered(), bls = BorderingBLS()))
+    @test ~BK.checks_orientation(PALC(tangent = Bordered(), bls = MatrixFreeBLS()))
+    @test ~BK.checks_orientation(PALC(tangent = Polynomial(Bordered(), 2, 6, rand(1))))
+    # the default is resolved from the current tangent and bls, also when they are changed with @set or update
     secant, bordered = PALC(), PALC(tangent = Bordered())
-    @test ~BK.checks_orientation(@set secant.tangent = Bordered())
-    @test BK.checks_orientation(@set bordered.tangent = Secant())
+    @test BK.checks_orientation(@set secant.tangent = Bordered())
+    @test ~BK.checks_orientation(@set bordered.bls = BorderingBLS())
+    @test BK.checks_orientation(@set secant.bls = BorderingBLS())
+    @test ~BK.checks_orientation(BK.update(bordered, options(Float64), BorderingBLS()))
+    @test BK.checks_orientation(BK.update(bordered, options(Float64), nothing))
+    # an explicit value is kept
     @test ~BK.checks_orientation(PALC(orientation_check = false))
-    @test BK.checks_orientation(PALC(tangent = Bordered(), orientation_check = true))
+    @test ~BK.checks_orientation(PALC(tangent = Bordered(), orientation_check = false))
+    @test BK.checks_orientation(PALC(tangent = Bordered(), bls = BorderingBLS(), orientation_check = true))
 
     for tangent in (Secant(), Bordered())
         br = continuation(make_problem(Float64), PALC(; tangent, step_control = CorrectorQuality(), orientation_check = true), options(Float64))
@@ -240,7 +250,7 @@ let
     @test_throws AssertionError CorrectorQuality(max_turn = 0.0)
     # the corrector lands at φ0 + φ on the circle, where the tangent has turned by φ: refused from max_turn on, with no orientation_check
     for (φ, max_turn, accepted) in ((0.4, 0.5, true), (0.6, 0.5, false), (2.0, 1.0, false), (2.0, 2.5, true))
-        alg = PALC(; tangent = Bordered(), step_control = CorrectorQuality(; max_turn, max_contraction = nothing, max_growth = nothing))
+        alg = PALC(; tangent = Bordered(), orientation_check = false, step_control = CorrectorQuality(; max_turn, max_contraction = nothing, max_growth = nothing))
         iter = ContIterable(prob, alg, options)
         state = iterate(iter)[1]
         landing = point(φ0 + φ)

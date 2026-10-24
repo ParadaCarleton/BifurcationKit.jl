@@ -79,7 +79,7 @@ $(TYPEDEF)
 
 Pseudo-arclength continuation algorithm.
 
-With a `Secant` tangent the orientation test `orientation_check` is on by default: it costs one dot product per step. With another tangent it is off by default: a `Bordered` tangent needs a `MatrixBLS` solver for it.
+The orientation test `orientation_check` is on by default for a `Secant` tangent (one dot product per step) and for a `Bordered` tangent with a `MatrixBLS` solver (the determinant of the bordered matrix, read from the LU factorisation that solves for the tangent). A `Bordered` tangent with another bordered solver gets no orientation test by default, because the determinant needs the dense bordered matrix: a corrector that lands on a part of the curve running the other way is then caught only by the tests of [`CorrectorQuality`](@ref).
 
 Additional information is available on the [website](https://bifurcationkit.github.io/BifurcationKitDocs.jl/dev/PALC/).
 
@@ -101,15 +101,16 @@ $(TYPEDFIELDS)
     dotθ::Tdot = DotTheta()
     "Step control by the quality of the corrector, a [`CorrectorQuality`](@ref) or `nothing` (the default). With `nothing`, `ds` is controlled by the number of Newton iterations, see the parameter `a` of [`ContinuationPar`](@ref)."
     step_control::Tctl = nothing
-    "Orientation test: reject a step whose new tangent has a negative dot product with the previous one (they point more than `π / 2` apart), as when the corrector converged onto a nearby part of the curve that runs the other way. A `Secant` tangent is the chord to the new point, so the test costs one dot product. A `Bordered` tangent is oriented as the curve is, by the sign of the determinant of the bordered matrix `[J dFdl; τ']` (Allgower and Georg, *Introduction to Numerical Continuation Methods*, definition (2.1.7)), with the sign fixed to the direction of travel at the start. That determinant needs a `MatrixBLS` solver, and is read from the LU factorisation that solves for the new tangent. `true` or `false` sets the test; `nothing` (the default) turns it on for a `Secant` tangent and off otherwise, also after the tangent is changed with `@set`."
+    "Orientation test: reject a step whose new tangent has a negative dot product with the previous one (they point more than `π / 2` apart), as when the corrector converged onto a nearby part of the curve that runs the other way. A `Secant` tangent is the chord to the new point, so the test costs one dot product. A `Bordered` tangent is oriented as the curve is, by the sign of the determinant of the bordered matrix `[J dFdl; τ']` (Allgower and Georg, *Introduction to Numerical Continuation Methods*, definition (2.1.7)), with the sign fixed to the direction of travel at the start. That determinant needs a `MatrixBLS` solver, and is read from the LU factorisation that solves for the new tangent. `true` or `false` sets the test. `nothing` (the default) turns it on for a `Secant` tangent and for a `Bordered` tangent with a `MatrixBLS` solver, and off otherwise; it is resolved from the current `tangent` and `bls`, so it follows them when they are changed with `@set`. `true` with a `Bordered` tangent and another bordered solver is an error."
     orientation_check::Union{Nothing, Bool} = nothing
 
     @assert ~(tangent isa Constant) "You cannot use a constant predictor with PALC"
     @assert 0 <= θ <= 1 "θ must belong to [0, 1]"
-    @assert ~(something(orientation_check, tangent isa Secant) || ~isnothing(_turn_limit(step_control))) || tangent isa Union{Secant, Bordered} "orientation_check and max_turn need a Secant or Bordered tangent"
+    @assert ~(orientation_check === true || ~isnothing(_turn_limit(step_control))) || tangent isa Union{Secant, Bordered} "orientation_check and max_turn need a Secant or Bordered tangent"
 end
-"Whether the orientation test of `alg` is on: its `orientation_check`, or with `nothing` whether its tangent is a `Secant`."
-checks_orientation(alg::PALC) = something(alg.orientation_check, alg.tangent isa Secant)
+
+"Whether the orientation test of `alg` is on, resolved from its current `orientation_check`, `tangent` and `bls`."
+checks_orientation(alg::PALC) = _checks_orientation(alg.orientation_check, alg.tangent, alg.bls)
 get_bordered_linsolver(alg::PALC) = alg.bls
 getdot(alg::PALC) = alg.dotθ
 getθ(alg::PALC) = alg.θ

@@ -74,6 +74,12 @@ Whether the `Bordered` tangents of `iter` are oriented by the determinant of the
 """
 orients_by_determinant(iter::AbstractContinuationIterable) = iter.alg isa PALC && tracks_turn(iter.alg)
 
+# the default of `orientation_check` (`nothing`): on where the test is cheap, a chord or a dense LU the tangent already needs
+_checks_orientation(check::Bool, tangent, bls) = check
+_checks_orientation(::Nothing, ::Secant, bls) = true
+_checks_orientation(::Nothing, ::Bordered, ::MatrixBLS) = true
+_checks_orientation(::Nothing, tangent, bls) = false
+
 """
 $(TYPEDSIGNATURES)
 
