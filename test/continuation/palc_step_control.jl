@@ -220,7 +220,22 @@ let
         checked = continuation(prob, PALC(; tangent, orientation_check = true), ContinuationPar(options; ds))
         @test checked.branch.param ≈ plain.branch.param rtol = 1e-10
         @test length(checked.branch) == 31
+        # the default (MatrixBLS) runs the check
+        @test continuation(prob, PALC(; tangent), ContinuationPar(options; ds)).branch.param ≈ checked.branch.param
     end
+
+    # a Bordered tangent with a bordered solver other than MatrixBLS has no determinant: the default runs without the check,
+    # also when the solver is passed to continuation, and asking for the check is an error
+    bordering = BorderingBLS(solver = DefaultLS(), check_precision = false)
+    unchecked = continuation(prob, PALC(; tangent = Bordered(), bls = bordering, orientation_check = false), options)
+    for default in (continuation(prob, PALC(; tangent = Bordered(), bls = bordering), options),
+                    continuation(prob, PALC(; tangent = Bordered()), options; linear_algo = bordering))
+        @test default.alg.bls isa BorderingBLS
+        @test ~BK.checks_orientation(default.alg)
+        @test default.branch.param ≈ unchecked.branch.param
+    end
+    @test_throws ErrorException continuation(prob, PALC(; tangent = Bordered(), bls = bordering, orientation_check = true), options)
+    @test_throws ErrorException continuation(prob, PALC(; tangent = Bordered(), bls = bordering, step_control = CorrectorQuality(; max_turn = 1.0)), options)
 
     # a corrector landing past a quarter turn is refused with the check and accepted without it
     # (a Secant chord that makes progress cannot turn back, so only Bordered is tested)
