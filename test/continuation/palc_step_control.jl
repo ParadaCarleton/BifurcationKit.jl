@@ -83,8 +83,14 @@ let
 
     # step_control is off by default, orientation_check is on for a Secant tangent only
     @test PALC().step_control === nothing
-    @test PALC().orientation_check
-    @test ~PALC(tangent = Bordered()).orientation_check
+    @test BK.checks_orientation(PALC())
+    @test ~BK.checks_orientation(PALC(tangent = Bordered()))
+    # with the default the test follows the tangent, also when it is changed with @set
+    secant, bordered = PALC(), PALC(tangent = Bordered())
+    @test ~BK.checks_orientation(@set secant.tangent = Bordered())
+    @test BK.checks_orientation(@set bordered.tangent = Secant())
+    @test ~BK.checks_orientation(PALC(orientation_check = false))
+    @test BK.checks_orientation(PALC(tangent = Bordered(), orientation_check = true))
 
     for tangent in (Secant(), Bordered())
         br = continuation(make_problem(Float64), PALC(; tangent, step_control = CorrectorQuality(), orientation_check = true), options(Float64))

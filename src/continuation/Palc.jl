@@ -101,13 +101,15 @@ $(TYPEDFIELDS)
     dotθ::Tdot = DotTheta()
     "Step control by the quality of the corrector, a [`CorrectorQuality`](@ref) or `nothing` (the default). With `nothing`, `ds` is controlled by the number of Newton iterations, see the parameter `a` of [`ContinuationPar`](@ref)."
     step_control::Tctl = nothing
-    "Orientation test: reject a step whose new tangent has a negative dot product with the previous one (they point more than `π / 2` apart), as when the corrector converged onto a nearby part of the curve that runs the other way. A `Secant` tangent is the chord to the new point, so the test costs one dot product. A `Bordered` tangent is oriented as the curve is, by the sign of the determinant of the bordered matrix `[J dFdl; τ']` (Allgower and Georg, *Introduction to Numerical Continuation Methods*, definition (2.1.7)), with the sign fixed to the direction of travel at the start. That determinant needs a `MatrixBLS` solver, and is read from the LU factorisation that solves for the new tangent. On by default for a `Secant` tangent, off otherwise."
-    orientation_check::Bool = tangent isa Secant
+    "Orientation test: reject a step whose new tangent has a negative dot product with the previous one (they point more than `π / 2` apart), as when the corrector converged onto a nearby part of the curve that runs the other way. A `Secant` tangent is the chord to the new point, so the test costs one dot product. A `Bordered` tangent is oriented as the curve is, by the sign of the determinant of the bordered matrix `[J dFdl; τ']` (Allgower and Georg, *Introduction to Numerical Continuation Methods*, definition (2.1.7)), with the sign fixed to the direction of travel at the start. That determinant needs a `MatrixBLS` solver, and is read from the LU factorisation that solves for the new tangent. `true` or `false` sets the test; `nothing` (the default) turns it on for a `Secant` tangent and off otherwise, also after the tangent is changed with `@set`."
+    orientation_check::Union{Nothing, Bool} = nothing
 
     @assert ~(tangent isa Constant) "You cannot use a constant predictor with PALC"
     @assert 0 <= θ <= 1 "θ must belong to [0, 1]"
-    @assert ~(orientation_check || ~isnothing(_turn_limit(step_control))) || tangent isa Union{Secant, Bordered} "orientation_check and max_turn need a Secant or Bordered tangent"
+    @assert ~(something(orientation_check, tangent isa Secant) || ~isnothing(_turn_limit(step_control))) || tangent isa Union{Secant, Bordered} "orientation_check and max_turn need a Secant or Bordered tangent"
 end
+"Whether the orientation test of `alg` is on: its `orientation_check`, or with `nothing` whether its tangent is a `Secant`."
+checks_orientation(alg::PALC) = something(alg.orientation_check, alg.tangent isa Secant)
 get_bordered_linsolver(alg::PALC) = alg.bls
 getdot(alg::PALC) = alg.dotθ
 getθ(alg::PALC) = alg.θ
@@ -325,7 +327,7 @@ _turn_limit(::Nothing) = nothing
 _turn_limit(control::CorrectorQuality) = control.max_turn
 
 "Whether the new tangent of each step is computed: for `orientation_check` or a `max_turn` of `step_control`."
-tracks_turn(alg::PALC) = alg.orientation_check || ~isnothing(_turn_limit(alg.step_control))
+tracks_turn(alg::PALC) = checks_orientation(alg) || ~isnothing(_turn_limit(alg.step_control))
 _rejects_turn(::Nothing, turn) = false
 _rejects_turn(control::CorrectorQuality, turn) = rejects_turn(control, turn)
 _observe_turn(::Nothing, quality, turn) = quality
@@ -337,7 +339,7 @@ function _turns_forward!(check::PALCStepCheck, znew::BorderedArray)
     end
     state = check.state
     cosine, next_tangent = turn_cosine(check.alg.tangent, state, check.iter, znew, getdot(check.alg))
-    if check.alg.orientation_check && cosine < 0
+    if checks_orientation(check.alg) && cosine < 0
         if check.iter.verbosity > 0
             printstyled("Step rejected: the new tangent points away from the previous one (dot product $cosine)\n", color = :red)
         end
@@ -362,7 +364,7 @@ function corrector!(state::AbstractContinuationState,
     state.next_tangent = nothing
     callback = get(kwargs, :callback, it.callback_newton)
     # the bisection that locates special points prescribes `ds` (`stepsizecontrol(state) == false`) and accepts every converged step
-    if stepsizecontrol(state) && (~isnothing(alg.step_control) || alg.orientation_check)
+    if stepsizecontrol(state) && (~isnothing(alg.step_control) || checks_orientation(alg))
         if ~(state.cache isa PALCCache)
             throw(ArgumentError("step_control and orientation_check of PALC need PALC as the continuation algorithm of the iterator"))
         end
