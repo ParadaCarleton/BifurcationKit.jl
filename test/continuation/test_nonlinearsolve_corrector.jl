@@ -228,6 +228,8 @@ opts_bratu = ContinuationPar(
         J = J_bratu_free,
     )
     free_policy = JacobianReuse(max_age = 50)
+    # NonlinearSolve.jl PR 1353 adds `reinit!(...; reuse_jacobian)` and preconditioner reuse for matrix-free Jacobians
+    nonlinearsolve_reuses = any(method -> :reuse_jacobian in Base.kwarg_decl(method), methods(NonlinearSolve.SciMLBase.reinit!))
 
     @testset "a matrix-free Newton solve reaches the root of the dense one" begin
         prob = re_make(prob_free; params = (λ = 1.0,), u0 = fill(0.1, 20))
@@ -245,7 +247,11 @@ opts_bratu = ContinuationPar(
         @test BK.converged(sol1)
         @test norm(sol0.u - sol1.u, Inf) < 1.0e-7
         # the preconditioner is built when the policy refreshes it, not at every iterate
-        @test builds[] < sol1.itnewton
+        if nonlinearsolve_reuses
+            @test builds[] < sol1.itnewton
+        else
+            @test_skip builds[] < sol1.itnewton
+        end
     end
 
     @testset "matrix-free PALC follows the dense branch, rebuilding the preconditioner only when reuse refreshes it" begin
@@ -282,6 +288,10 @@ opts_bratu = ContinuationPar(
             @test maximum(point -> point.p, br.sol) ≈
                 maximum(point -> point.p, br_reference.sol) atol = 0.02
         end
-        @test builds_reused[] < builds_fresh[]
+        if nonlinearsolve_reuses
+            @test builds_reused[] < builds_fresh[]
+        else
+            @test_skip builds_reused[] < builds_fresh[]
+        end
     end
 end
