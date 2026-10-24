@@ -79,6 +79,8 @@ $(TYPEDEF)
 
 Pseudo-arclength continuation algorithm.
 
+With a `Secant` tangent the orientation test `orientation_check` is on by default: it costs one dot product per step. With another tangent it is off by default: a `Bordered` tangent needs a `MatrixBLS` solver for it.
+
 Additional information is available on the [website](https://bifurcationkit.github.io/BifurcationKitDocs.jl/dev/PALC/).
 
 # Internal fields
@@ -99,8 +101,8 @@ $(TYPEDFIELDS)
     dotθ::Tdot = DotTheta()
     "Step control by the quality of the corrector, a [`CorrectorQuality`](@ref) or `nothing` (the default). With `nothing`, `ds` is controlled by the number of Newton iterations, see the parameter `a` of [`ContinuationPar`](@ref)."
     step_control::Tctl = nothing
-    "Orientation test: reject a step whose new tangent has a negative dot product with the previous one (they point more than `π / 2` apart), as when the corrector converged onto a nearby part of the curve that runs the other way. A `Secant` tangent is the chord to the new point, so the test costs one dot product. A `Bordered` tangent is oriented as the curve is, by the sign of the determinant of the bordered matrix `[J dFdl; τ']` (Allgower and Georg, *Introduction to Numerical Continuation Methods*, definition (2.1.7)), with the sign fixed to the direction of travel at the start. That determinant needs a `MatrixBLS` solver, and is read from the LU factorisation that solves for the new tangent. Off by default."
-    orientation_check::Bool = false
+    "Orientation test: reject a step whose new tangent has a negative dot product with the previous one (they point more than `π / 2` apart), as when the corrector converged onto a nearby part of the curve that runs the other way. A `Secant` tangent is the chord to the new point, so the test costs one dot product. A `Bordered` tangent is oriented as the curve is, by the sign of the determinant of the bordered matrix `[J dFdl; τ']` (Allgower and Georg, *Introduction to Numerical Continuation Methods*, definition (2.1.7)), with the sign fixed to the direction of travel at the start. That determinant needs a `MatrixBLS` solver, and is read from the LU factorisation that solves for the new tangent. On by default for a `Secant` tangent, off otherwise."
+    orientation_check::Bool = tangent isa Secant
 
     @assert ~(tangent isa Constant) "You cannot use a constant predictor with PALC"
     @assert 0 <= θ <= 1 "θ must belong to [0, 1]"

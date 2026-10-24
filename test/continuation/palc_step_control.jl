@@ -81,9 +81,10 @@ let
     make_problem(T) = BifurcationProblem(F, T[-1.3247179], (λ = zero(T),), (@optic _.λ))
     options(T; ds = 0.05, dsmax = 0.5) = ContinuationPar(ds = T(ds), dsmin = T(1e-6), dsmax = T(dsmax), a = T(0.5), p_min = zero(T), p_max = T(2), η = T(150), tol_stability = T(1e-10), dsmin_bisection = T(1e-16), tol_bisection_eigenvalue = T(1e-16), tol_param_bisection_event = T(1e-16), max_steps = 200, detect_fold = true, detect_bifurcation = 0, newton_options = NewtonPar(tol = sqrt(eps(T))))
 
-    # both are off by default
+    # step_control is off by default, orientation_check is on for a Secant tangent only
     @test PALC().step_control === nothing
-    @test ~PALC().orientation_check
+    @test PALC().orientation_check
+    @test ~PALC(tangent = Bordered()).orientation_check
 
     for tangent in (Secant(), Bordered())
         br = continuation(make_problem(Float64), PALC(; tangent, step_control = CorrectorQuality(), orientation_check = true), options(Float64))
