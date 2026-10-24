@@ -70,16 +70,13 @@ _shortname(::PALC{Bordered}) = "PALC [Bordered]"
 """
 $(TYPEDSIGNATURES)
 
-Whether the `Bordered` tangents of `alg` are oriented by the determinant of the bordered matrix, for the orientation test or a `max_turn`.
+Whether the `Bordered` tangents of `alg` are oriented by the determinant of the bordered matrix, read from its current `tangent` and `bls`. With `MatrixBLS` it is for the orientation test or a `max_turn`. With another bordered solver it is only for a `max_turn`, which needs that determinant and errors in [`bordered_tangent_and_sign`](@ref).
 """
-orients_by_determinant(alg::PALC) = alg.tangent isa Bordered && tracks_turn(alg)
+orients_by_determinant(alg::PALC) = _orients_by_determinant(alg.tangent, alg.bls, alg)
 orients_by_determinant(iter::AbstractContinuationIterable) = iter.alg isa PALC && orients_by_determinant(iter.alg)
-
-# the default of `orientation_check` (`nothing`): on where the test is cheap, a chord or a dense LU the tangent already needs
-_checks_orientation(check::Bool, tangent, bls) = check
-_checks_orientation(::Nothing, ::Secant, bls) = true
-_checks_orientation(::Nothing, ::Bordered, ::MatrixBLS) = true
-_checks_orientation(::Nothing, tangent, bls) = false
+_orients_by_determinant(::Bordered, ::MatrixBLS, alg::PALC) = tracks_turn(alg)
+_orients_by_determinant(::Bordered, ::AbstractBorderedLinearSolver, alg::PALC) = ~isnothing(_turn_limit(alg.step_control))
+_orients_by_determinant(::AbstractTangentComputation, ::AbstractLinearSolver, ::PALC) = false
 
 """
 $(TYPEDSIGNATURES)
@@ -168,7 +165,7 @@ end
 """
 $(TYPEDSIGNATURES)
 
-Set the orientation sign of the `PALCCache` so that the determinant orientation of a `Bordered` tangent at the start points along the secant tangent `state.τ`, the direction of travel. Called at the start of a continuation with `orientation_check`; the method for other tangents returns `state`.
+Set the orientation sign of the `PALCCache` so that the determinant orientation of a `Bordered` tangent at the start points along the secant tangent `state.τ`, the direction of travel. Called at the start of a continuation whose tangents are oriented by the determinant ([`orients_by_determinant`](@ref)).
 """
 function init_orientation_check!(state::AbstractContinuationState, iter::AbstractContinuationIterable, alg::PALC{<:Bordered})
     state.cache = _update(state.cache; orientation = 1)
@@ -179,8 +176,6 @@ function init_orientation_check!(state::AbstractContinuationState, iter::Abstrac
     end
     return state
 end
-
-init_orientation_check!(state::AbstractContinuationState, ::AbstractContinuationIterable, ::PALC) = state
 
 """
 $(TYPEDSIGNATURES)

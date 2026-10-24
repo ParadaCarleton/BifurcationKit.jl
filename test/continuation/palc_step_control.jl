@@ -81,26 +81,27 @@ let
     make_problem(T) = BifurcationProblem(F, T[-1.3247179], (λ = zero(T),), (@optic _.λ))
     options(T; ds = 0.05, dsmax = 0.5) = ContinuationPar(ds = T(ds), dsmin = T(1e-6), dsmax = T(dsmax), a = T(0.5), p_min = zero(T), p_max = T(2), η = T(150), tol_stability = T(1e-10), dsmin_bisection = T(1e-16), tol_bisection_eigenvalue = T(1e-16), tol_param_bisection_event = T(1e-16), max_steps = 200, detect_fold = true, detect_bifurcation = 0, newton_options = NewtonPar(tol = sqrt(eps(T))))
 
-    # step_control is off by default; orientation_check is on for a Secant tangent and for a Bordered tangent with MatrixBLS
+    # step_control is off by default; orientation_check is on for every tangent and bordered solver, and the determinant
+    # test follows the chord test only for a Bordered tangent with MatrixBLS
     @test PALC().step_control === nothing
-    for bls in (MatrixBLS(), BorderingBLS(), MatrixFreeBLS())
-        @test BK.checks_orientation(PALC(; bls))
+    for tangent in (Secant(), Bordered(), Polynomial(Bordered(), 2, 6, rand(1))), bls in (MatrixBLS(), BorderingBLS(), MatrixFreeBLS())
+        alg = PALC(; tangent, bls)
+        @test alg.orientation_check
+        @test BK.orients_by_determinant(alg) == (tangent isa Bordered && bls isa MatrixBLS)
     end
-    @test BK.checks_orientation(PALC(tangent = Bordered()))
-    @test ~BK.checks_orientation(PALC(tangent = Bordered(), bls = BorderingBLS()))
-    @test ~BK.checks_orientation(PALC(tangent = Bordered(), bls = MatrixFreeBLS()))
-    @test ~BK.checks_orientation(PALC(tangent = Polynomial(Bordered(), 2, 6, rand(1))))
-    # the default is resolved from the current tangent and bls, also when they are changed with @set or update
+    # the solver and tangent are read when the test runs, also after @set or update
     secant, bordered = PALC(), PALC(tangent = Bordered())
-    @test BK.checks_orientation(@set secant.tangent = Bordered())
-    @test ~BK.checks_orientation(@set bordered.bls = BorderingBLS())
-    @test BK.checks_orientation(@set secant.bls = BorderingBLS())
-    @test ~BK.checks_orientation(BK.update(bordered, options(Float64), BorderingBLS()))
-    @test BK.checks_orientation(BK.update(bordered, options(Float64), nothing))
-    # an explicit value is kept
-    @test ~BK.checks_orientation(PALC(orientation_check = false))
-    @test ~BK.checks_orientation(PALC(tangent = Bordered(), orientation_check = false))
-    @test BK.checks_orientation(PALC(tangent = Bordered(), bls = BorderingBLS(), orientation_check = true))
+    @test BK.orients_by_determinant(@set secant.tangent = Bordered())
+    @test (@set bordered.bls = BorderingBLS()).orientation_check
+    @test ~BK.orients_by_determinant(@set bordered.bls = BorderingBLS())
+    @test ~BK.orients_by_determinant(BK.update(bordered, options(Float64), BorderingBLS()))
+    @test BK.orients_by_determinant(BK.update(bordered, options(Float64), nothing))
+    # without the orientation test a max_turn still needs the determinant, whatever the bordered solver
+    @test ~BK.orients_by_determinant(PALC(tangent = Bordered(), orientation_check = false))
+    for bls in (MatrixBLS(), BorderingBLS())
+        @test BK.orients_by_determinant(PALC(; tangent = Bordered(), bls, orientation_check = false, step_control = CorrectorQuality(max_turn = 1.0)))
+    end
+    @test_throws AssertionError PALC(tangent = Polynomial(Bordered(), 2, 6, rand(1)), step_control = CorrectorQuality(max_turn = 1.0))
 
     for tangent in (Secant(), Bordered())
         br = continuation(make_problem(Float64), PALC(; tangent, step_control = CorrectorQuality(), orientation_check = true), options(Float64))
@@ -222,17 +223,19 @@ let
         @test continuation(prob, PALC(; tangent), ContinuationPar(options; ds)).branch.param ≈ checked.branch.param
     end
 
-    # a Bordered tangent with a bordered solver other than MatrixBLS has no determinant: the default runs without the check,
-    # also when the solver is passed to continuation, and asking for the check is an error
+    # a Bordered tangent with a bordered solver other than MatrixBLS takes the chord test only: on the curve it accepts
+    # every converged PALC step, with the default, an explicit check, or the solver passed to continuation
     bordering = BorderingBLS(solver = DefaultLS(), check_precision = false)
     unchecked = continuation(prob, PALC(; tangent = Bordered(), bls = bordering, orientation_check = false), options)
-    for default in (continuation(prob, PALC(; tangent = Bordered(), bls = bordering), options),
+    for checked in (continuation(prob, PALC(; tangent = Bordered(), bls = bordering), options),
+                    continuation(prob, PALC(; tangent = Bordered(), bls = bordering, orientation_check = true), options),
                     continuation(prob, PALC(; tangent = Bordered()), options; linear_algo = bordering))
-        @test default.alg.bls isa BorderingBLS
-        @test ~BK.checks_orientation(default.alg)
-        @test default.branch.param ≈ unchecked.branch.param
+        @test checked.alg.bls isa BorderingBLS
+        @test checked.alg.orientation_check
+        @test ~BK.orients_by_determinant(checked.alg)
+        @test checked.branch.param ≈ unchecked.branch.param
     end
-    @test_throws ErrorException continuation(prob, PALC(; tangent = Bordered(), bls = bordering, orientation_check = true), options)
+    # a max_turn needs the determinant, which only MatrixBLS gives
     @test_throws ErrorException continuation(prob, PALC(; tangent = Bordered(), bls = bordering, step_control = CorrectorQuality(; max_turn = 1.0)), options)
 
     # a corrector landing past a quarter turn is refused with the check and accepted without it
@@ -311,6 +314,13 @@ let
     @test isnothing(bounded_state(PALC(; tangent = Bordered(), orientation_check = true), on_branch; ds = -0.3).next_tangent)
     # an accepted step hands its determinant-oriented tangent to the next predictor
     @test ~isnothing(bounded_state(PALC(; tangent = Bordered(), orientation_check = true), on_branch).next_tangent)
+    # with BorderingBLS the chord test runs alone: it refuses the backward chord, keeps no tangent, and accepts the landing
+    # past the top of the circle, whose chord points forward, where only the determinant sees the way back
+    bordering_alg = PALC(; tangent = Bordered(), bls = BorderingBLS(solver = DefaultLS(), check_precision = false))
+    @test ~BK.converged(bounded_state(bordering_alg, on_branch; ds = -0.3))
+    @test BK.converged(bounded_state(bordering_alg, on_branch))
+    @test isnothing(bounded_state(bordering_alg, on_branch).next_tangent)
+    @test BK.converged(bounded_state(bordering_alg, over_the_top))
     # the distance test refuses a Newton step that is long
     for (max_distance, accepted) in ((1e-3, false), (1.0, true))
         alg = PALC(; tangent = Bordered(), step_control = CorrectorQuality(; max_distance))

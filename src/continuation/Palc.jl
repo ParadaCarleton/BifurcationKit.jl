@@ -79,7 +79,7 @@ $(TYPEDEF)
 
 Pseudo-arclength continuation algorithm.
 
-The orientation test `orientation_check` is on by default for a `Secant` tangent (one dot product per step) and for a `Bordered` tangent with a `MatrixBLS` solver (the determinant of the bordered matrix, read from the LU factorisation that solves for the tangent). A `Bordered` tangent with another bordered solver gets no orientation test by default, because the determinant needs the dense bordered matrix: a corrector that lands on a part of the curve running the other way is then caught only by the tests of [`CorrectorQuality`](@ref).
+The orientation test `orientation_check` is on by default, for every tangent and bordered solver. Every step first takes the chord test: the chord to the new point against the direction of travel, one dot product. A `Bordered` tangent with a `MatrixBLS` solver then takes the determinant test, read from the LU factorisation that solves for the new tangent; it also detects a corrector that converged onto a nearby part of the curve that runs the other way. With another bordered solver the determinant needs a dense bordered matrix that the solver does not form, so the chord test is the only one.
 
 Additional information is available on the [website](https://bifurcationkit.github.io/BifurcationKitDocs.jl/dev/PALC/).
 
@@ -101,16 +101,14 @@ $(TYPEDFIELDS)
     dotθ::Tdot = DotTheta()
     "Step control by the quality of the corrector, a [`CorrectorQuality`](@ref) or `nothing` (the default). With `nothing`, `ds` is controlled by the number of Newton iterations, see the parameter `a` of [`ContinuationPar`](@ref)."
     step_control::Tctl = nothing
-    "Orientation test: reject a step whose new tangent has a negative dot product with the previous one (they point more than `π / 2` apart), as when the corrector converged onto a nearby part of the curve that runs the other way. A `Secant` tangent is the chord to the new point, so the test costs one dot product. A `Bordered` tangent is oriented as the curve is, by the sign of the determinant of the bordered matrix `[J dFdl; τ']` (Allgower and Georg, *Introduction to Numerical Continuation Methods*, definition (2.1.7)), with the sign fixed to the direction of travel at the start. A `Bordered` tangent takes this test only after the chord test (the chord to the new point against the direction of travel, one dot product) passes. That determinant needs a `MatrixBLS` solver, and is read from the LU factorisation that solves for the new tangent. `true` or `false` sets the test. `nothing` (the default) turns it on for a `Secant` tangent and for a `Bordered` tangent with a `MatrixBLS` solver, and off otherwise; it is resolved from the current `tangent` and `bls`, so it follows them when they are changed with `@set`. `true` with a `Bordered` tangent and another bordered solver is an error."
-    orientation_check::Union{Nothing, Bool} = nothing
+    "Orientation test, on by default. Every step first takes the chord test: a step whose chord from the previous point has a negative dot product with the direction of travel `sign(ds) τ` is rejected, with no new tangent computed. A `Bordered` tangent with a `MatrixBLS` solver then takes the determinant test: its tangent at the new point is oriented as the curve is, by the sign of the determinant of the bordered matrix `[J dFdl; τ']` (Allgower and Georg, *Introduction to Numerical Continuation Methods*, definition (2.1.7)), with the sign fixed to the direction of travel at the start, and the step is rejected when that tangent has a negative dot product with the previous one, as when the corrector converged onto a nearby part of the curve that runs the other way. The sign is read from the LU factorisation that solves for the new tangent. With another bordered solver the chord test is the only one; the solver is read when the test runs, so it follows `@set alg.bls = ...`."
+    orientation_check::Bool = true
 
     @assert ~(tangent isa Constant) "You cannot use a constant predictor with PALC"
     @assert 0 <= θ <= 1 "θ must belong to [0, 1]"
-    @assert ~(orientation_check === true || ~isnothing(_turn_limit(step_control))) || tangent isa Union{Secant, Bordered} "orientation_check and max_turn need a Secant or Bordered tangent"
+    @assert isnothing(_turn_limit(step_control)) || tangent isa Union{Secant, Bordered} "max_turn needs a Secant or Bordered tangent"
 end
 
-"Whether the orientation test of `alg` is on, resolved from its current `orientation_check`, `tangent` and `bls`."
-checks_orientation(alg::PALC) = _checks_orientation(alg.orientation_check, alg.tangent, alg.bls)
 get_bordered_linsolver(alg::PALC) = alg.bls
 getdot(alg::PALC) = alg.dotθ
 getθ(alg::PALC) = alg.θ
@@ -148,7 +146,7 @@ function initialize!(state::AbstractContinuationState,
     # we want to start at (u0, p0), not at (u1, p1)
     _copyto!(state.z, state.z_old)
     # an algorithm that uses PALC only as its predictor (MoorePenrose) keeps no PALCCache and runs no turn test
-    if tracks_turn(alg) && state.cache isa PALCCache
+    if orients_by_determinant(alg) && state.cache isa PALCCache
         init_orientation_check!(state, iter, alg)
     end
     # then update the predictor state.z_pred
@@ -328,8 +326,8 @@ end
 _turn_limit(::Nothing) = nothing
 _turn_limit(control::CorrectorQuality) = control.max_turn
 
-"Whether the new tangent of each step is computed: for `orientation_check` or a `max_turn` of `step_control`."
-tracks_turn(alg::PALC) = checks_orientation(alg) || ~isnothing(_turn_limit(alg.step_control))
+"Whether each step's turn is tested: for `orientation_check` or a `max_turn` of `step_control`."
+tracks_turn(alg::PALC) = alg.orientation_check || ~isnothing(_turn_limit(alg.step_control))
 _rejects_turn(::Nothing, turn) = false
 _rejects_turn(control::CorrectorQuality, turn) = rejects_turn(control, turn)
 _observe_turn(::Nothing, quality, turn) = quality
@@ -343,7 +341,7 @@ function _turns_forward!(check::PALCStepCheck, znew::BorderedArray)
     state = check.state
     # the chord test needs no new tangent; the determinant test follows only for a chord that points forward
     chord = chord_turn_cosine(state, check.iter, znew, getdot(alg))
-    if checks_orientation(alg) && chord < 0
+    if alg.orientation_check && chord < 0
         if check.iter.verbosity > 0
             printstyled("Step rejected: the chord to the new point points away from the previous tangent (cosine $chord)\n", color = :red)
         end
@@ -353,7 +351,7 @@ function _turns_forward!(check::PALCStepCheck, znew::BorderedArray)
     if orients_by_determinant(alg)
         cosine, next_tangent = turn_cosine(alg.tangent, state, check.iter, znew, getdot(alg))
     end
-    if checks_orientation(alg) && cosine < 0
+    if alg.orientation_check && cosine < 0
         if check.iter.verbosity > 0
             printstyled("Step rejected: the new tangent points away from the previous one (dot product $cosine)\n", color = :red)
         end
@@ -378,7 +376,7 @@ function corrector!(state::AbstractContinuationState,
     state.next_tangent = nothing
     callback = get(kwargs, :callback, it.callback_newton)
     # the bisection that locates special points prescribes `ds` (`stepsizecontrol(state) == false`) and accepts every converged step
-    if stepsizecontrol(state) && (~isnothing(alg.step_control) || checks_orientation(alg))
+    if stepsizecontrol(state) && (~isnothing(alg.step_control) || alg.orientation_check)
         if ~(state.cache isa PALCCache)
             throw(ArgumentError("step_control and orientation_check of PALC need PALC as the continuation algorithm of the iterator"))
         end
