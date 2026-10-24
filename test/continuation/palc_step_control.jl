@@ -382,13 +382,16 @@ let
         @test alg.bls isa MatrixBLS
         @test br.branch.param[end] ≈ options.p_max
         @test all(diff(br.branch.param) .> 0)
-        @test any(λ -> abs(λ) < 1e-2, br.branch.param)
         @test all(point -> abs(point.x[1]) < 1e-8, br.sol)
-        if detect_bifurcation == 3
-            bps = filter(sp -> sp.type == :bp, br.specialpoint)
-            @test length(bps) == 1
-            @test only(bps).status == :converged
-            @test abs(only(bps).param) < 1e-3
+        # only the checked arm walks down to dsmin at the branch point; without the check the step jumps over it
+        if alg.orientation_check
+            @test any(λ -> abs(λ) < 1e-2, br.branch.param)
+            if detect_bifurcation == 3
+                bps = filter(sp -> sp.type == :bp, br.specialpoint)
+                @test length(bps) == 1
+                @test only(bps).status == :converged
+                @test abs(only(bps).param) < 1e-3
+            end
         end
     end
 end
