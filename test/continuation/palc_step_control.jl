@@ -377,7 +377,7 @@ let
     F(u, p) = @. u * (p.λ - u^2)
     prob = BifurcationProblem(F, [0.0], (λ = -0.5,), (@optic _.λ))
     for detect_bifurcation in (0, 3), alg in (PALC(; tangent = Bordered()), PALC(; tangent = Bordered(), orientation_check = false))
-        options = ContinuationPar(ds = 0.05, dsmin = 1e-4, dsmax = 0.1, p_min = -1.0, p_max = 0.5, max_steps = 500, detect_fold = false, detect_bifurcation, newton_options = NewtonPar(tol = 1e-10))
+        options = ContinuationPar(ds = 0.05, dsmin = 1e-4, dsmax = 0.1, p_min = -1.0, p_max = 0.5, max_steps = 500, detect_fold = false, detect_bifurcation = detect_bifurcation, newton_options = NewtonPar(tol = 1e-10))
         br = continuation(prob, alg, options)
         @test alg.bls isa MatrixBLS
         @test br.branch.param[end] ≈ options.p_max
