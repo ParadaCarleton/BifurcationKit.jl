@@ -155,6 +155,11 @@ let
         # UMFPACK factorises a sparse matrix
         @test BK.determinant_sign(lu(sparse(A))) == last(logabsdet(A))
     end
+    # a negative pivot, a row swap, and both together (det [0 1; -1 0] = 1)
+    for (A, s) in (([-2.0;;], -1), ([2.0 1.0; 1.0 3.0], 1), ([0.0 1.0; 1.0 0.0], -1), ([0.0 1.0; -1.0 0.0], 1))
+        @test BK.determinant_sign(lu(A)) == s == last(logabsdet(A))
+        @test BK.determinant_sign(lu(Float32.(A))) == s
+    end
 end
 ####################################################################################################
 # orientation_check: determinant orientation of a Bordered tangent, rejection on a negative dot product
