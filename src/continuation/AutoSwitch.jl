@@ -26,6 +26,8 @@ getθ(alg::AutoSwitch) = getθ(alg.alg)
 getdot(alg::AutoSwitch) = getdot(alg.alg)
 get_bordered_linsolver(alg::AutoSwitch) = get_bordered_linsolver(alg.alg)
 internal_adaptation!(alg::AutoSwitch, onoroff::Bool) = internal_adaptation!(alg.alg, onoroff)
+# the corrector of `alg.alg` keeps its data in the state
+_continuation_cache(alg::AutoSwitch, z, ::Type{T}) where {T} = _continuation_cache(alg.alg, z, T)
 
 function update(alg::AutoSwitch, contParams::ContinuationPar, linear_algo) 
     alg2 = update(alg.alg, contParams, linear_algo)
