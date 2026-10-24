@@ -69,6 +69,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-julia-compiled-${{ matrix.version }}-
 
+      - name: Load packages that are not in the registry or lack PR 1353
+        # Julia 1.10 ignores [sources]: BorderedLinearSolve is unregistered, and the NonlinearSolve libraries come from our fork for PR 1353
+        run: |
+          julia --project=@. -e '
+            import Pkg
+            fork = "https://github.com/ParadaCarleton/NonlinearSolve.jl"
+            Pkg.add([Pkg.PackageSpec(url = "https://github.com/SciML/BorderedLinearSolve.jl"); [Pkg.PackageSpec(url = fork, rev = "irv", subdir = "lib/" * name) for name in ("NonlinearSolveBase", "NonlinearSolveFirstOrder", "NonlinearSolveQuasiNewton")]])
+          '
+
       - name: Build julia package
         uses: julia-actions/julia-buildpkg@v1
 
@@ -109,11 +118,6 @@ jobs:
                 println("Detected labels for specific tests. Running: ", join(test_args, ", "))
             end
 
-            # The corrector tests need NonlinearSolve.jl PR 1353, which the registry lacks: load the libraries of our fork
-            fork = "https://github.com/ParadaCarleton/NonlinearSolve.jl"
-            Pkg.add([Pkg.PackageSpec(url = fork, rev = "irv", subdir = "lib/" * name) for name in ("NonlinearSolveBase", "NonlinearSolveFirstOrder", "NonlinearSolveQuasiNewton")])
-
-            # Run tests
             Pkg.test(coverage=true, test_args=test_args)
           '
 
