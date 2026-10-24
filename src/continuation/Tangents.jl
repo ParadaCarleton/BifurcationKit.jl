@@ -157,7 +157,8 @@ function gettangent!(state::AbstractContinuationState,
                     iter::AbstractContinuationIterable,
                     ::Bordered, 
                     dotθ)
-    τ = bordered_tangent(state, iter, state.z, dotθ; by_determinant = orients_by_determinant(iter))
+    # a bisection crosses its special point back and forth, and the determinant orientation flips at a branch point
+    τ = bordered_tangent(state, iter, state.z, dotθ; by_determinant = orients_by_determinant(iter) && ~in_bisection(state))
     _copyto!(state.τ.u, τ.u)
     state.τ.p = τ.p
     return state.τ

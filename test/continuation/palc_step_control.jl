@@ -371,17 +371,24 @@ let
 end
 ####################################################################################################
 # a simple branch point on the trivial branch of a pitchfork: the bordered determinant is λ (1 - θ), so the determinant
-# orientation flips at λ = 0; the default orientation_check crosses it at dsmin and reaches p_max
+# orientation flips at λ = 0; the default orientation_check crosses it at dsmin and reaches p_max, and the bisection
+# that locates the branch point aligns its tangents with the previous one
 let
     F(u, p) = @. u * (p.λ - u^2)
     prob = BifurcationProblem(F, [0.0], (λ = -0.5,), (@optic _.λ))
-    options = ContinuationPar(ds = 0.05, dsmin = 1e-4, dsmax = 0.1, p_min = -1.0, p_max = 0.5, max_steps = 500, detect_fold = false, detect_bifurcation = 0, newton_options = NewtonPar(tol = 1e-10))
-    for alg in (PALC(; tangent = Bordered()), PALC(; tangent = Bordered(), orientation_check = false))
+    for detect_bifurcation in (0, 3), alg in (PALC(; tangent = Bordered()), PALC(; tangent = Bordered(), orientation_check = false))
+        options = ContinuationPar(ds = 0.05, dsmin = 1e-4, dsmax = 0.1, p_min = -1.0, p_max = 0.5, max_steps = 500, detect_fold = false, detect_bifurcation, newton_options = NewtonPar(tol = 1e-10))
         br = continuation(prob, alg, options)
         @test alg.bls isa MatrixBLS
         @test br.branch.param[end] ≈ options.p_max
         @test all(diff(br.branch.param) .> 0)
         @test any(λ -> abs(λ) < 1e-2, br.branch.param)
         @test all(point -> abs(point.x[1]) < 1e-8, br.sol)
+        if detect_bifurcation == 3
+            bps = filter(sp -> sp.type == :bp, br.specialpoint)
+            @test length(bps) == 1
+            @test only(bps).status == :converged
+            @test abs(only(bps).param) < 1e-3
+        end
     end
 end
