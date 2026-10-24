@@ -91,7 +91,7 @@ function bordered_tangent_and_sign(::MatrixBLS, iter::AbstractContinuationIterab
     return (@view res[begin:end-1]), res[end], determinant_sign(F)
 end
 
-bordered_tangent_and_sign(lbs::AbstractBorderedLinearSolver, ::AbstractContinuationIterable, ::AbstractContinuationState, J, dFdl, rhsu, rhsp) = error("orientation_check orients a Bordered tangent by a determinant, which only MatrixBLS gives, not $(typeof(lbs))")
+bordered_tangent_and_sign(lbs::AbstractBorderedLinearSolver, ::AbstractContinuationIterable, ::AbstractContinuationState, J, dFdl, rhsu, rhsp) = error("max_turn orients a Bordered tangent by a determinant, which only MatrixBLS gives, not $(typeof(lbs))")
 
 """
 $(TYPEDSIGNATURES)
