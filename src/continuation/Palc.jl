@@ -111,7 +111,7 @@ $(TYPEDFIELDS)
     "`dotθ = DotTheta()`, this sets up a dot product `(x, y) -> dot(x, y) / length(x)` used to define the weighted dot product (resp. norm) ``\\|(x, p)\\|^2_\\theta`` in the constraint ``N(x, p)`` (see online docs on [PALC](https://bifurcationkit.github.io/BifurcationKitDocs.jl/dev/PALC/)). This argument can be used to remove the factor `1/length(x)` for example in problems where the dimension of the state space changes (mesh adaptation, ...) or when a specific (FEM) dot product is provided."
     dotθ::Tdot = DotTheta()
     "Step control by the quality of the corrector, a [`CorrectorQuality`](@ref) or `nothing` (the default). With `nothing`, `ds` is controlled by the number of Newton iterations, see the parameter `a` of [`ContinuationPar`](@ref)."
-    step_control::Tctl = nothing
+    step_control::Tctl = CorrectorQuality(max_contraction = nothing, max_growth = nothing, max_turn = 0.5)
     "Orientation test, on by default. It applies to a `Bordered` tangent with a `MatrixBLS` solver, read when the test runs (so it follows `@set alg.bls = ...`). The tangent at the new point is oriented as the curve is, by the sign of the determinant of the bordered matrix `[J dFdl; τ']` (Allgower and Georg, *Introduction to Numerical Continuation Methods*, definition (2.1.7)), with the sign fixed to the direction of travel at the start and read from the LU factorisation that solves for the tangent. A step whose new tangent has a negative dot product with the previous one is rejected, as when the corrector converged onto a nearby part of the curve that runs the other way. At a simple branch point the determinant changes sign: `ds` is halved down to `dsmin`, about `log2(dsmax / dsmin)` rejected steps, and a step refused at `dsmin` is assumed to straddle a branch point and is taken with the orientation sign negated. The bisection that locates a special point aligns each tangent with the previous one, as it crosses the point back and forth."
     orientation_check::Bool = true
 
@@ -379,6 +379,7 @@ function _turns_forward!(check::PALCStepCheck, znew::BorderedArray, on_arc::Bool
     end
     turn = acos(clamp(cosine, -one(cosine), one(cosine)))
     if _rejects_turn(check.control, turn)
+        @info "TURN_REJECTED" turn
         if check.iter.verbosity > 0
             printstyled("Step rejected: the tangent turned by $turn radians\n", color = :red)
         end
