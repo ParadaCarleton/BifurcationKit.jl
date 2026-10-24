@@ -37,8 +37,6 @@ function get_bordered_linsolver(alg::MoorePenrose) # this is essentially for tan
 end
 
 _shortname(alg::MoorePenrose) = "MoorePenrose ($(_shortname(alg.predictor)))"
-# the predictor `alg.predictor` keeps its orientation data in the state
-_continuation_cache(alg::MoorePenrose, z, ::Type{T}) where {T} = _continuation_cache(alg.predictor, z, T)
 
 """
 $(TYPEDSIGNATURES)

@@ -147,7 +147,8 @@ function initialize!(state::AbstractContinuationState,
     gettangent!(state, iter, Secant(), getdot(alg))
     # we want to start at (u0, p0), not at (u1, p1)
     _copyto!(state.z, state.z_old)
-    if tracks_turn(alg)
+    # an algorithm that uses PALC only as its predictor (MoorePenrose) keeps no PALCCache and runs no turn test
+    if tracks_turn(alg) && state.cache isa PALCCache
         init_orientation_check!(state, iter, alg)
     end
     # then update the predictor state.z_pred
