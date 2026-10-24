@@ -204,14 +204,12 @@ let
     # the orientation sign flips the whole field
     state.cache = BK._update(state.cache; orientation = -1)
     @test BK.bordered_tangent(state, iter, point(φ0 + 0.4), dotθ; by_determinant = true).p ≈ -unit_tangent(φ0 + 0.4).p rtol = 1e-6
-    # a Secant tangent is the chord: its cosine is that of consecutive chords, and the sign of ds is the direction
+    # the chord test compares the direction of travel sign(ds) τ with the chord to the new point
     state.cache = BK._update(state.cache; orientation = 1)
     for ds in (0.3, -0.3)
         state.ds = ds
-        cosine, next = BK.turn_cosine(Secant(), state, iter, point(φ0 + sign(ds) * 0.4), dotθ)
-        @test cosine ≈ cos(0.2) rtol = 1e-6
-        @test isnothing(next)
-        @test first(BK.turn_cosine(Secant(), state, iter, point(φ0 - sign(ds) * 0.4), dotθ)) ≈ -cos(0.2) rtol = 1e-6
+        @test BK.chord_turn_cosine(state, iter, point(φ0 + sign(ds) * 0.4), dotθ) ≈ cos(0.2) rtol = 1e-6
+        @test BK.chord_turn_cosine(state, iter, point(φ0 - sign(ds) * 0.4), dotθ) ≈ -cos(0.2) rtol = 1e-6
     end
 
     # the start sets the sign of the orientation to the direction of travel, whichever way ds points
@@ -281,13 +279,13 @@ let
     # a predictor beyond p_max is corrected at the bound by Newton's method at fixed parameter: the tests apply to that step too
     φ1 = 0.4
     bound_options = ContinuationPar(options; p_max = 0.7)
-    bounded_state(alg, z_pred) = let iter = ContIterable(prob, alg, bound_options)
+    bounded_state(alg, z_pred; ds = 0.3) = let iter = ContIterable(prob, alg, bound_options)
         state = iterate(iter)[1]
         state.z = point(φ1)
         state.τ = unit_tangent(φ1)
         state.cache = BK._update(state.cache; orientation = 1)
         state.z_pred = z_pred
-        state.ds = 0.3
+        state.ds = ds
         BK.corrector!(state, iter, alg)
         state
     end
@@ -305,6 +303,14 @@ let
         @test state.z.p == 0.7
         @test state.z.u[1] ≈ sqrt(1 - 0.7^2)
     end
+    # with ds < 0 the landing on the branch ahead has a backward chord: the chord test refuses it, where the determinant
+    # orientation alone would accept it, and leaves no tangent for the next predictor
+    for check in (true, false)
+        @test BK.converged(bounded_state(PALC(; tangent = Bordered(), orientation_check = check), on_branch; ds = -0.3)) == ~check
+    end
+    @test isnothing(bounded_state(PALC(; tangent = Bordered(), orientation_check = true), on_branch; ds = -0.3).next_tangent)
+    # an accepted step hands its determinant-oriented tangent to the next predictor
+    @test ~isnothing(bounded_state(PALC(; tangent = Bordered(), orientation_check = true), on_branch).next_tangent)
     # the distance test refuses a Newton step that is long
     for (max_distance, accepted) in ((1e-3, false), (1.0, true))
         alg = PALC(; tangent = Bordered(), step_control = CorrectorQuality(; max_distance))

@@ -70,9 +70,10 @@ _shortname(::PALC{Bordered}) = "PALC [Bordered]"
 """
 $(TYPEDSIGNATURES)
 
-Whether the `Bordered` tangents of `iter` are oriented by the determinant of the bordered matrix (`PALC` with `orientation_check` or a `max_turn`).
+Whether the `Bordered` tangents of `alg` are oriented by the determinant of the bordered matrix, for the orientation test or a `max_turn`.
 """
-orients_by_determinant(iter::AbstractContinuationIterable) = iter.alg isa PALC && tracks_turn(iter.alg)
+orients_by_determinant(alg::PALC) = alg.tangent isa Bordered && tracks_turn(alg)
+orients_by_determinant(iter::AbstractContinuationIterable) = iter.alg isa PALC && orients_by_determinant(iter.alg)
 
 # the default of `orientation_check` (`nothing`): on where the test is cheap, a chord or a dense LU the tangent already needs
 _checks_orientation(check::Bool, tangent, bls) = check
@@ -184,7 +185,7 @@ init_orientation_check!(state::AbstractContinuationState, ::AbstractContinuation
 """
 $(TYPEDSIGNATURES)
 
-Cosine, in the norm of `dt`, of the angle between the tangent at `state.z` and the tangent at `znew`, and the new tangent when this computed it (`nothing` otherwise). A `Bordered` predictor computes the tangent at `znew` oriented by the determinant (and the next predictor takes it). Any other predictor compares the direction of travel `sign(ds) τ` with the chord to `znew`, which stands for the new tangent.
+Cosine, in the norm of `dt`, of the angle between the tangent at `state.z` and the `Bordered` tangent at `znew` oriented by the determinant, and that new tangent (the next predictor takes it).
 """
 function turn_cosine(::Bordered, state::AbstractContinuationState, iter::AbstractContinuationIterable, znew::BorderedArray, dt::DotTheta)
     τ = state.τ
@@ -193,9 +194,12 @@ function turn_cosine(::Bordered, state::AbstractContinuationState, iter::Abstrac
     return dt(τ.u, τnew.u, τ.p, τnew.p, θ) / (dt(τ, θ) * dt(τnew, θ)), τnew
 end
 
-function turn_cosine(::AbstractTangentComputation, state::AbstractContinuationState, iter::AbstractContinuationIterable, znew::BorderedArray, dt::DotTheta)
-    return sign(state.ds) * chord_cosine(dt, state.τ, state.z, znew, getθ(iter)), nothing
-end
+"""
+$(TYPEDSIGNATURES)
+
+Cosine, in the norm of `dt`, of the angle between the direction of travel `sign(ds) τ` and the chord from `state.z` to `znew`. It needs no new tangent.
+"""
+chord_turn_cosine(state::AbstractContinuationState, iter::AbstractContinuationIterable, znew::BorderedArray, dt::DotTheta) = sign(state.ds) * chord_cosine(dt, state.τ, state.z, znew, getθ(iter))
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
     Polynomial Tangent predictor

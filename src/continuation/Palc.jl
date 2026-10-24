@@ -101,7 +101,7 @@ $(TYPEDFIELDS)
     dotθ::Tdot = DotTheta()
     "Step control by the quality of the corrector, a [`CorrectorQuality`](@ref) or `nothing` (the default). With `nothing`, `ds` is controlled by the number of Newton iterations, see the parameter `a` of [`ContinuationPar`](@ref)."
     step_control::Tctl = nothing
-    "Orientation test: reject a step whose new tangent has a negative dot product with the previous one (they point more than `π / 2` apart), as when the corrector converged onto a nearby part of the curve that runs the other way. A `Secant` tangent is the chord to the new point, so the test costs one dot product. A `Bordered` tangent is oriented as the curve is, by the sign of the determinant of the bordered matrix `[J dFdl; τ']` (Allgower and Georg, *Introduction to Numerical Continuation Methods*, definition (2.1.7)), with the sign fixed to the direction of travel at the start. That determinant needs a `MatrixBLS` solver, and is read from the LU factorisation that solves for the new tangent. `true` or `false` sets the test. `nothing` (the default) turns it on for a `Secant` tangent and for a `Bordered` tangent with a `MatrixBLS` solver, and off otherwise; it is resolved from the current `tangent` and `bls`, so it follows them when they are changed with `@set`. `true` with a `Bordered` tangent and another bordered solver is an error."
+    "Orientation test: reject a step whose new tangent has a negative dot product with the previous one (they point more than `π / 2` apart), as when the corrector converged onto a nearby part of the curve that runs the other way. A `Secant` tangent is the chord to the new point, so the test costs one dot product. A `Bordered` tangent is oriented as the curve is, by the sign of the determinant of the bordered matrix `[J dFdl; τ']` (Allgower and Georg, *Introduction to Numerical Continuation Methods*, definition (2.1.7)), with the sign fixed to the direction of travel at the start. A `Bordered` tangent takes this test only after the chord test (the chord to the new point against the direction of travel, one dot product) passes. That determinant needs a `MatrixBLS` solver, and is read from the LU factorisation that solves for the new tangent. `true` or `false` sets the test. `nothing` (the default) turns it on for a `Secant` tangent and for a `Bordered` tangent with a `MatrixBLS` solver, and off otherwise; it is resolved from the current `tangent` and `bls`, so it follows them when they are changed with `@set`. `true` with a `Bordered` tangent and another bordered solver is an error."
     orientation_check::Union{Nothing, Bool} = nothing
 
     @assert ~(tangent isa Constant) "You cannot use a constant predictor with PALC"
@@ -336,12 +336,24 @@ _observe_turn(::Nothing, quality, turn) = quality
 _observe_turn(control::CorrectorQuality, quality, turn) = observe_turn(control, quality, turn)
 
 function _turns_forward!(check::PALCStepCheck, znew::BorderedArray)
-    if ~tracks_turn(check.alg)
+    alg = check.alg
+    if ~tracks_turn(alg)
         return true
     end
     state = check.state
-    cosine, next_tangent = turn_cosine(check.alg.tangent, state, check.iter, znew, getdot(check.alg))
-    if checks_orientation(check.alg) && cosine < 0
+    # the chord test needs no new tangent; the determinant test follows only for a chord that points forward
+    chord = chord_turn_cosine(state, check.iter, znew, getdot(alg))
+    if checks_orientation(alg) && chord < 0
+        if check.iter.verbosity > 0
+            printstyled("Step rejected: the chord to the new point points away from the previous tangent (cosine $chord)\n", color = :red)
+        end
+        return false
+    end
+    cosine, next_tangent = chord, nothing
+    if orients_by_determinant(alg)
+        cosine, next_tangent = turn_cosine(alg.tangent, state, check.iter, znew, getdot(alg))
+    end
+    if checks_orientation(alg) && cosine < 0
         if check.iter.verbosity > 0
             printstyled("Step rejected: the new tangent points away from the previous one (dot product $cosine)\n", color = :red)
         end
