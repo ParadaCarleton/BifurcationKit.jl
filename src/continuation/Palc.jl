@@ -420,6 +420,7 @@ function _corrector!(state::AbstractContinuationState,
         return true
     end
 
+
     # update fields, in particular the `converged` one
     _update_field_but_not_solution!(state, sol)
 
