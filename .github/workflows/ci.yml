@@ -109,6 +109,10 @@ jobs:
                 println("Detected labels for specific tests. Running: ", join(test_args, ", "))
             end
 
+            # The corrector tests need NonlinearSolve.jl PR 1353, which the registry lacks: load the libraries of our fork
+            fork = "https://github.com/ParadaCarleton/NonlinearSolve.jl"
+            Pkg.add([Pkg.PackageSpec(url = fork, rev = "irv", subdir = "lib/" * name) for name in ("NonlinearSolveBase", "NonlinearSolveFirstOrder", "NonlinearSolveQuasiNewton")])
+
             # Run tests
             Pkg.test(coverage=true, test_args=test_args)
           '
