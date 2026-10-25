@@ -43,6 +43,32 @@ _get_apply_dot(dt::DotTheta) = dt.apply!
 (dt::DotTheta)(a::BorderedArray{vec, T}, b::BorderedArray{vec, T}, θ::T) where {vec, T} = dt(a.u, b.u, a.p, b.p, θ)
 (dt::DotTheta)(a::BorderedArray{vec, T}, θ::T) where {vec, T} = dt(a.u, a.p, θ)
 
+"""
+$(TYPEDSIGNATURES)
+
+Projection `<znew - z, τ>` of the chord from `z` to `znew` on the tangent `τ`, and the length of the chord, in the norm of `dt`.
+"""
+function chord_projection(dt::DotTheta, τ::BorderedArray, z::BorderedArray, znew::BorderedArray, θ::Real)
+    Δ = _copy(znew)
+    Δ = VI.add!!(Δ, z, -one(θ))
+    return dt(τ.u, Δ.u, τ.p, Δ.p, θ), dt(Δ.u, Δ.p, θ)
+end
+
+"""
+$(TYPEDSIGNATURES)
+
+Cosine, in the norm of `dt`, of the angle between the tangent `τ` at `z` and the chord from `z` to `znew`. An empty chord has cosine 1: it does not turn.
+"""
+chord_cosine(dt::DotTheta, τ::BorderedArray, z::BorderedArray, znew::BorderedArray, θ::Real) = chord_cosine(chord_projection(dt, τ, z, znew, θ)..., dt(τ.u, τ.p, θ))
+
+"Cosine of the angle between a tangent of length `tangent_length` and a chord of length `chord_length` whose projection on it is `along`."
+function chord_cosine(along::Real, chord_length::Real, tangent_length::Real)
+    if iszero(chord_length)
+        return one(chord_length)
+    end
+    return along / (tangent_length * chord_length)
+end
+
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # equation of the arc length constraint
 arc_length_eq(dt::DotTheta, u, p, du, dp, θ, ds) = dt(u, du, p, dp, θ) - ds
@@ -64,6 +90,8 @@ $(TYPEDEF)
 
 Pseudo-arclength continuation algorithm.
 
+The orientation test `orientation_check` is on by default and applies to a `Bordered` tangent with a `MatrixBLS` solver: the tangent at the new point is oriented by the sign of the determinant of the bordered matrix, read from the LU factorisation that solves for it, and a step whose new tangent points against the previous one is rejected, as when the corrector converged onto a nearby part of the curve that runs the other way. The determinant changes sign at a simple branch point, so crossing one costs about `log2(dsmax / dsmin)` rejected steps: a step that the determinant test refuses at `dsmin` is assumed to straddle a branch point and is taken with the orientation flipped.
+
 Additional information is available on the [website](https://bifurcationkit.github.io/BifurcationKitDocs.jl/dev/PALC/).
 
 # Internal fields
@@ -84,10 +112,14 @@ $(TYPEDFIELDS)
     dotθ::Tdot = DotTheta()
     "Step control by the quality of the corrector, a [`CorrectorQuality`](@ref) or `nothing` (the default). With `nothing`, `ds` is controlled by the number of Newton iterations, see the parameter `a` of [`ContinuationPar`](@ref)."
     step_control::Tctl = nothing
+    "Orientation test, on by default. It applies to a `Bordered` tangent with a `MatrixBLS` solver, read when the test runs (so it follows `@set alg.bls = ...`). The tangent at the new point is oriented as the curve is, by the sign of the determinant of the bordered matrix `[J dFdl; τ']` (Allgower and Georg, *Introduction to Numerical Continuation Methods*, definition (2.1.7)), with the sign fixed to the direction of travel at the start and read from the LU factorisation that solves for the tangent. A step whose new tangent has a negative dot product with the previous one is rejected, as when the corrector converged onto a nearby part of the curve that runs the other way. At a simple branch point the determinant changes sign: `ds` is halved down to `dsmin`, about `log2(dsmax / dsmin)` rejected steps, and a step refused at `dsmin` is assumed to straddle a branch point and is taken with the orientation sign negated. The bisection that locates a special point aligns each tangent with the previous one, as it crosses the point back and forth."
+    orientation_check::Bool = true
 
     @assert ~(tangent isa Constant) "You cannot use a constant predictor with PALC"
     @assert 0 <= θ <= 1 "θ must belong to [0, 1]"
+    @assert isnothing(_turn_limit(step_control)) || tangent isa Union{Secant, Bordered} "max_turn needs a Secant or Bordered tangent"
 end
+
 get_bordered_linsolver(alg::PALC) = alg.bls
 getdot(alg::PALC) = alg.dotθ
 getθ(alg::PALC) = alg.θ
@@ -124,6 +156,10 @@ function initialize!(state::AbstractContinuationState,
     gettangent!(state, iter, Secant(), getdot(alg))
     # we want to start at (u0, p0), not at (u1, p1)
     _copyto!(state.z, state.z_old)
+    # an algorithm that uses PALC only as its predictor (MoorePenrose) keeps no PALCCache and runs no turn test
+    if orients_by_determinant(alg) && state.cache isa PALCCache
+        init_orientation_check!(state, iter, alg)
+    end
     # then update the predictor state.z_pred
     update_predictor!(state, iter, alg, nrm)
 end
@@ -145,7 +181,12 @@ function _getpredictor_palc!(state::AbstractContinuationState,
     # state.z has been updated only if converged(state) == true
     if converged(state)
         @debug "Update tangent"
-        gettangent!(state, iter, alg.tangent, getdot(alg))
+        if isnothing(state.next_tangent)
+            gettangent!(state, iter, alg.tangent, getdot(alg))
+        else
+            _copyto!(state.τ, state.next_tangent)
+            state.next_tangent = nothing
+        end
     end
     # then update the predictor state.z_pred
     update_predictor!(state, iter, alg, nrm)
@@ -159,14 +200,16 @@ update_predictor!(state::AbstractContinuationState,
 """
 $(TYPEDEF)
 
-Data of [`PALC`](@ref) carried across continuation steps in `ContState.cache`, used by `step_control`.
+Data of [`PALC`](@ref) carried across continuation steps in `ContState.cache`, used by `step_control` and `orientation_check`.
 
 $(TYPEDFIELDS)
 """
 struct PALCCache{T, Tq, Tv}
     "factor by which step size control multiplies `ds` after the current step, or `nothing` to use the Newton iteration count."
     step_factor::Union{Nothing, T}
-    "quality of the current corrector."
+    "sign (±1) relating the determinant orientation of a `Bordered` tangent to the direction of travel, set at the start."
+    orientation::Int
+    "quality of the current corrector, `nothing` without `step_control`."
     quality::Tq
     "whether `step_control` rejected the current corrector."
     rejected::Bool
@@ -178,20 +221,21 @@ end
 
 function _update(cache::PALCCache;
                  step_factor = cache.step_factor,
+                 orientation::Int = cache.orientation,
                  quality = cache.quality,
                  rejected::Bool = cache.rejected,
                  started::Bool = cache.started)
-    return typeof(cache)(step_factor, quality, rejected, started, cache.previous)
+    return typeof(cache)(step_factor, orientation, quality, rejected, started, cache.previous)
 end
 
 _continuation_cache(::AbstractContinuationAlgorithm, z, ::Type) = nothing
 
 function _continuation_cache(alg::PALC, z::BorderedArray, ::Type{T}) where {T}
     if isnothing(alg.step_control)
-        return nothing
+        return PALCCache{T, Nothing, Nothing}(nothing, 1, nothing, false, false, nothing)
     end
     quality = StepQuality(CorrectorQuality{T}(alg.step_control))
-    return PALCCache{T, typeof(quality), typeof(z)}(nothing, quality, false, false, _copy(z))
+    return PALCCache{T, typeof(quality), typeof(z)}(nothing, 1, quality, false, false, _copy(z))
 end
 
 _step_factor(::Nothing) = nothing
@@ -211,9 +255,9 @@ end
 """
 $(TYPEDEF)
 
-Newton callback of [`PALC`](@ref) with `step_control`, wrapping the Newton callback `callback`.
+Newton callback of [`PALC`](@ref) with `step_control` or `orientation_check`, wrapping the Newton callback `callback`.
 After each Newton step it applies the tests of `control` to the distance between consecutive iterates, in the norm of the arc length constraint.
-A rejection returns `false`, otherwise the value of `callback`.
+After the last step it applies the orientation test to the converged point. A rejection returns `false`, otherwise the value of `callback`.
 """
 struct PALCStepCheck{Tstate, Titer, Talg, Tc, T, Tcb}
     state::Tstate
@@ -224,6 +268,12 @@ struct PALCStepCheck{Tstate, Titer, Talg, Tc, T, Tcb}
     callback::Tcb
 end
 
+_control(::Nothing, ::Type) = nothing
+_control(control::CorrectorQuality, ::Type{T}) where {T} = CorrectorQuality{T}(control)
+_quality(::Nothing) = nothing
+_quality(control::CorrectorQuality) = StepQuality(control)
+
+_record_iterate!(::Nothing, x, p) = nothing
 function _record_iterate!(previous::BorderedArray, x, p)
     _copyto!(previous.u, x)
     previous.p = p
@@ -251,8 +301,18 @@ function (check::PALCStepCheck)(newton_state; kwargs...)
     if cache.rejected
         return false
     end
-    return check.callback(newton_state; kwargs...)
+    verdict = check.callback(newton_state; kwargs...)
+    if verdict === false || (verdict === true && newton_state.residual >= check.tol)
+        return verdict
+    end
+    # newton_palc, which imposes the arc length constraint, passes `p`; the Natural corrector at a parameter bound holds `p` fixed
+    if ~_turns_forward!(check, BorderedArray(newton_state.x, p), haskey(newton_state, :p))
+        return false
+    end
+    return verdict
 end
+
+_rejects_newton_step!(::PALCStepCheck, ::Nothing, x, p) = false
 
 function _rejects_newton_step!(check::PALCStepCheck, control::CorrectorQuality, x, p)
     state = check.state
@@ -275,20 +335,75 @@ function _rejects_newton_step!(check::PALCStepCheck, control::CorrectorQuality, 
     return false
 end
 
+_turn_limit(::Nothing) = nothing
+_turn_limit(control::CorrectorQuality) = control.max_turn
+
+"Whether each step's turn is tested: for `orientation_check` or a `max_turn` of `step_control`."
+tracks_turn(alg::PALC) = alg.orientation_check || ~isnothing(_turn_limit(alg.step_control))
+_rejects_turn(::Nothing, turn) = false
+_rejects_turn(control::CorrectorQuality, turn) = rejects_turn(control, turn)
+_observe_turn(::Nothing, quality, turn) = quality
+_observe_turn(control::CorrectorQuality, quality, turn) = observe_turn(control, quality, turn)
+
+function _turns_forward!(check::PALCStepCheck, znew::BorderedArray, on_arc::Bool)
+    alg = check.alg
+    if ~tracks_turn(alg)
+        return true
+    end
+    state = check.state
+    dt, θ = getdot(alg), getθ(check.iter)
+    along, chord_length = chord_projection(dt, state.τ, state.z, znew, θ)
+    # newton_palc converges only when the arc length residual <znew - z, τ> - ds is below tol
+    if on_arc
+        @assert sign(state.ds) * along >= -check.tol "the arc length constraint <znew - z, τ> = ds makes the chord of a converged step point forward, but sign(ds) <znew - z, τ> = $(sign(state.ds) * along)"
+    end
+    if orients_by_determinant(alg)
+        cosine, next_tangent = turn_cosine(alg.tangent, state, check.iter, znew, dt)
+        if alg.orientation_check && cosine < 0
+            if abs(state.ds) > check.iter.contparams.dsmin
+                if check.iter.verbosity > 0
+                    printstyled("Step rejected: the new tangent points away from the previous one (dot product $cosine)\n", color = :red)
+                end
+                return false
+            end
+            # at the smallest step the refusal is taken as a branch point crossing, where the determinant changes sign
+            if check.iter.verbosity > 0
+                printstyled("Orientation flipped at dsmin: taking the step as a branch point crossing\n", color = :red)
+            end
+            state.cache = _update(state.cache; orientation = -state.cache.orientation)
+            VI.scale!(next_tangent, -one(cosine))
+            cosine = -cosine
+        end
+    else
+        cosine, next_tangent = sign(state.ds) * chord_cosine(along, chord_length, dt(state.τ, θ)), nothing
+    end
+    turn = acos(clamp(cosine, -one(cosine), one(cosine)))
+    if _rejects_turn(check.control, turn)
+        if check.iter.verbosity > 0
+            printstyled("Step rejected: the tangent turned by $turn radians\n", color = :red)
+        end
+        return false
+    end
+    state.cache = _update(state.cache; quality = _observe_turn(check.control, state.cache.quality, turn))
+    state.next_tangent = next_tangent
+    return true
+end
+
 function corrector!(state::AbstractContinuationState,
                     it::AbstractContinuationIterable,
                     alg::PALC;
                     kwargs...)
+    state.next_tangent = nothing
     callback = get(kwargs, :callback, it.callback_newton)
     # the bisection that locates special points prescribes `ds` (`stepsizecontrol(state) == false`) and accepts every converged step
-    if stepsizecontrol(state) && ~isnothing(alg.step_control)
+    if stepsizecontrol(state) && (~isnothing(alg.step_control) || alg.orientation_check)
         if ~(state.cache isa PALCCache)
-            throw(ArgumentError("step_control of PALC needs PALC as the continuation algorithm of the iterator"))
+            throw(ArgumentError("step_control and orientation_check of PALC need PALC as the continuation algorithm of the iterator"))
         end
-        control = CorrectorQuality{eltype(it)}(alg.step_control)
-        state.cache = _update(state.cache; step_factor = nothing, quality = StepQuality(control), rejected = false, started = false)
+        control = _control(alg.step_control, eltype(it))
+        state.cache = _update(state.cache; step_factor = nothing, quality = _quality(control), rejected = false, started = false)
         _corrector!(state, it, alg, PALCStepCheck(state, it, alg, control, it.contparams.newton_options.tol, callback); kwargs...)
-        if converged(state)
+        if converged(state) && ~isnothing(control)
             state.cache = _update(state.cache; step_factor = growth_factor(control, state.cache.quality))
             @debug "step growth" _group = :step_control step_factor = state.cache.step_factor capped = ~isnothing(control.max_growth) && growth_capped(control, state.cache.quality)
         end

@@ -38,6 +38,8 @@ getdot(alg::Multiple) = getdot(alg.alg)
 # important for bisection algorithm
 internal_adaptation!(alg::Multiple, onoroff::Bool) = internal_adaptation!(alg.alg, onoroff)
 @inline getθ(alg::Multiple) = getθ(alg.alg)
+# the corrector of `alg.alg` keeps its data in the state
+_continuation_cache(alg::Multiple, z, ::Type{T}) where {T} = _continuation_cache(alg.alg, z, T)
 
 function update(alg_m::Multiple, contParams::ContinuationPar, linear_algo)
     return @set alg_m.alg = update(alg_m.alg, contParams, linear_algo)
