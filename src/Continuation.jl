@@ -181,6 +181,8 @@ Base.@kwdef mutable struct ContState{Tv, T, Teigvals, Teigvec, Tcb, Tcache} <: A
     stopcontinuation::Bool = false
     "perform step size adaptation."
     stepsizecontrol::Bool = true
+    "tangent at the new solution, which the corrector computed for the orientation test (`PALC` with a `Bordered` tangent oriented by the determinant). The next predictor takes it. `nothing` otherwise."
+    next_tangent::Union{Nothing, Tv} = nothing
     "data of the continuation algorithm that persists across steps, for example a [`PALCCache`](@ref), or `nothing`."
     cache::Tcache = nothing
 
@@ -220,6 +222,7 @@ function Base.copy(state::ContState)
         ds               = state.ds,
         stopcontinuation = state.stopcontinuation,
         stepsizecontrol  = state.stepsizecontrol,
+        next_tangent     = isnothing(state.next_tangent) ? nothing : _copy(state.next_tangent),
         cache            = state.cache,
         n_unstable          = state.n_unstable,
         n_imag              = state.n_imag,
@@ -243,6 +246,7 @@ function Base.copyto!(dest::ContState, src::ContState)
         dest.ds               = src.ds
         dest.stopcontinuation = src.stopcontinuation
         dest.stepsizecontrol  = src.stepsizecontrol
+        dest.next_tangent     = isnothing(src.next_tangent) ? nothing : _copy(src.next_tangent)
         dest.cache            = src.cache
         dest.n_unstable       = src.n_unstable
         dest.n_imag           = src.n_imag
