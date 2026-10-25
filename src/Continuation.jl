@@ -157,7 +157,7 @@ $(TYPEDFIELDS)
 - `in_bisection(state)` whether the state is in bisection for locating special points.
 - `getparams(iter, state)` return the current parameter set.
 """
-Base.@kwdef mutable struct ContState{Tv, T, Teigvals, Teigvec, Tcb} <: AbstractContinuationState{Tv}
+Base.@kwdef mutable struct ContState{Tv, T, Teigvals, Teigvec, Tcb, Tcache} <: AbstractContinuationState{Tv}
     "predictor, i.e. the initial guess for the next Newton correction."
     z_pred::Tv
     "tangent to the curve at the current solution."
@@ -181,6 +181,8 @@ Base.@kwdef mutable struct ContState{Tv, T, Teigvals, Teigvec, Tcb} <: AbstractC
     stopcontinuation::Bool = false
     "perform step size adaptation."
     stepsizecontrol::Bool = true
+    "data of the continuation algorithm that persists across steps, for example a [`PALCCache`](@ref), or `nothing`."
+    cache::Tcache = nothing
 
     # the following values encode the current, previous number of unstable (resp. imaginary) eigen values
     # it is initialized as -1 when unknown
@@ -202,7 +204,7 @@ Base.@kwdef mutable struct ContState{Tv, T, Teigvals, Teigvec, Tcb} <: AbstractC
 end
 
 function EmptyContState(z::Tvec) where {Tvec} 
-    ContState{Union{Missing, Tvec}, Missing, Nothing, Nothing, Nothing}(;z, τ = missing, z_pred = missing, z_old = missing)
+    ContState{Union{Missing, Tvec}, Missing, Nothing, Nothing, Nothing, Nothing}(;z, τ = missing, z_pred = missing, z_old = missing)
 end
 
 function Base.copy(state::ContState)
@@ -218,6 +220,7 @@ function Base.copy(state::ContState)
         ds               = state.ds,
         stopcontinuation = state.stopcontinuation,
         stepsizecontrol  = state.stepsizecontrol,
+        cache            = state.cache,
         n_unstable          = state.n_unstable,
         n_imag              = state.n_imag,
         convergedEig        = state.convergedEig,
@@ -240,6 +243,7 @@ function Base.copyto!(dest::ContState, src::ContState)
         dest.ds               = src.ds
         dest.stopcontinuation = src.stopcontinuation
         dest.stepsizecontrol  = src.stepsizecontrol
+        dest.cache            = src.cache
         dest.n_unstable       = src.n_unstable
         dest.n_imag           = src.n_imag
         dest.convergedEig     = src.convergedEig
@@ -455,7 +459,8 @@ function iterate_from_two_points(it::ContIterable,
                         ds = it.contparams.ds,
                         eigvals,
                         eigvecs,
-                        eventValue = (cbval, cbval)
+                        eventValue = (cbval, cbval),
+                        cache = _continuation_cache(it.alg, z0, eltype(it)),
                     )
 
     # initialize the state for the continuation algorithm, at this stage, the tangent is set up
