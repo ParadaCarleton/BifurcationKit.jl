@@ -1,6 +1,6 @@
 name: Test impact map
 # Runs every test file under coverage and records which functions each one executes
-# (TestImpactAnalysis.jl). The select job of ci.yml reads the map to pick the tests a pull
+# (Fallout.jl). The select job of ci.yml reads the map to pick the tests a pull
 # request can affect.
 on:
   push:
@@ -29,9 +29,9 @@ jobs:
 
       - uses: julia-actions/cache@v3
 
-      - name: Install TestImpactAnalysis and the test environment
+      - name: Install Fallout and the test environment
         run: |
-          julia --project=$RUNNER_TEMP/tia -e 'using Pkg; Pkg.add(url = "https://github.com/ParadaCarleton/TestImpactAnalysis.jl", rev = "da1dd6dd0b97386f44b9255688d64576b9329492"); Pkg.add("TestEnv")'
+          julia --project=$RUNNER_TEMP/tia -e 'using Pkg; Pkg.add(url = "https://github.com/ParadaCarleton/Fallout.jl", rev = "2193dc36178d27b66bc18f8fb363473b2f68033e"); Pkg.add("TestEnv")'
           julia --project=. -e '
             pushfirst!(LOAD_PATH, joinpath(ENV["RUNNER_TEMP"], "tia"))
             using TestEnv
@@ -44,7 +44,7 @@ jobs:
         env:
           JULIA_NUM_THREADS: '2'
         run: >
-          julia --project=$RUNNER_TEMP/tia -e 'using TestImpactAnalysis; main(ARGS)' build
+          julia --project=$RUNNER_TEMP/tia -e 'using Fallout; main(ARGS)' build
           --suites test --suite-pattern '^(?!runtests\.jl$).*\.jl$'
           --project $RUNNER_TEMP/testenv --jobs 2 --timeout 7200
           --shard ${{ matrix.shard }}/4 --map shard-${{ matrix.shard }}.toml
@@ -71,8 +71,8 @@ jobs:
 
       - name: Merge shards
         run: |
-          julia --project=$RUNNER_TEMP/tia -e 'using Pkg; Pkg.add(url = "https://github.com/ParadaCarleton/TestImpactAnalysis.jl", rev = "da1dd6dd0b97386f44b9255688d64576b9329492")'
-          julia --project=$RUNNER_TEMP/tia -e 'using TestImpactAnalysis; main(ARGS)' merge --map test-impact-map.toml --in shard-1.toml --in shard-2.toml --in shard-3.toml --in shard-4.toml
+          julia --project=$RUNNER_TEMP/tia -e 'using Pkg; Pkg.add(url = "https://github.com/ParadaCarleton/Fallout.jl", rev = "2193dc36178d27b66bc18f8fb363473b2f68033e")'
+          julia --project=$RUNNER_TEMP/tia -e 'using Fallout; main(ARGS)' merge --map test-impact-map.toml --in shard-1.toml --in shard-2.toml --in shard-3.toml --in shard-4.toml
 
       - uses: actions/cache/save@v6
         with:
