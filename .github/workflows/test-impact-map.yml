@@ -4,7 +4,7 @@ name: Test impact map
 # request can affect.
 on:
   push:
-    branches: [master]
+    branches: [master, tia-only-check]
   workflow_dispatch:
 
 concurrency:
@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1]
     steps:
       - uses: actions/checkout@v7
 
@@ -47,7 +47,7 @@ jobs:
           julia --project=$RUNNER_TEMP/tia -e 'using Fallout; main(ARGS)' build
           --suites test --suite-pattern '^(?!runtests\.jl$).*\.jl$'
           --project $RUNNER_TEMP/testenv --jobs 2 --timeout 7200
-          --shard ${{ matrix.shard }}/4 --map shard-${{ matrix.shard }}.toml
+          --shard 1/1 --only codim2_core --only plot_plots --only stuartLandauTrap --map shard-${{ matrix.shard }}.toml
 
       - uses: actions/upload-artifact@v4
         with:
@@ -77,7 +77,7 @@ jobs:
       - name: Merge shards
         run: |
           julia --project=$RUNNER_TEMP/tia -e 'using Pkg; Pkg.add(url = "https://github.com/ParadaCarleton/Fallout.jl", rev = "2193dc36178d27b66bc18f8fb363473b2f68033e")'
-          julia --project=$RUNNER_TEMP/tia -e 'using Fallout; main(ARGS)' merge --map test-impact-map.toml --in shard-1.toml --in shard-2.toml --in shard-3.toml --in shard-4.toml
+          julia --project=$RUNNER_TEMP/tia -e 'using Fallout; main(ARGS)' merge --map test-impact-map.toml --in shard-1.toml 
 
       - uses: actions/cache/save@v6
         with:
