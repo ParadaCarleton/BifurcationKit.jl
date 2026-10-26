@@ -16,10 +16,23 @@ Solve the generalized eigenvalue problem ``A x = \\lambda B x`` using `l`.
 - `A`, `B`: the matrix (or operators) pair defining ``A x = \\lambda B x``.
 - `nev`: number of requested eigenvalues.
 """
+"""
+    is_finite_eigenvalue(λ, A, B)
+
+Whether `λ = α / β` is a finite eigenvalue of the pencil `(A, B)`. With a singular `B`, rounding
+turns an infinite eigenvalue into a huge finite one, with `|β|` at rounding level. Since `|α|` is at
+most of order `‖A‖`, an eigenvalue with `|λ| n eps ‖B‖ > ‖A‖` has `|β| < n eps ‖B‖`, so it is dropped.
+"""
+function is_finite_eigenvalue(λ, A, B)
+    rounding = size(B, 1) * eps(real(float(eltype(B)))) * LA.opnorm(B, 1)
+    return isfinite(λ) && abs(λ) * rounding <= LA.opnorm(A, 1)
+end
+
 function gev(eig::DefaultEig, A, B, nev; kwargs...)
     # we convert to Array so we can call it on small sparse matrices
-    F = LA.eigen(__to_array_for_eig(A), __to_array_for_eig(B); sortby = eig.which)
-    J = findall(isfinite, F.values)
+    Ad, Bd = __to_array_for_eig(A), __to_array_for_eig(B)
+    F = LA.eigen(Ad, Bd; sortby = eig.which)
+    J = findall(λ -> is_finite_eigenvalue(λ, Ad, Bd), F.values)
     nev2 = min(nev, length(J))
     return Complex.(F.values[J][end:-1:end-nev2+1]), Complex.(F.vectors[:, J[end:-1:end-nev2+1]]), true, 1
 end
