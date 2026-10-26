@@ -6,7 +6,56 @@ on:
   pull_request:
 
 jobs:
+  select:
+    # Picks the test files a pull request can affect (Fallout.jl), from the
+    # map that test-impact-map.yml builds on master. Without a map, every test runs.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.select.outputs.run }}
+      tests: ${{ steps.select.outputs.tests }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1'
+
+      - name: Restore test impact map
+        id: map
+        uses: actions/cache/restore@v6
+        with:
+          path: test-impact-map.toml
+          key: test-impact-map-${{ github.event.pull_request.base.sha }}
+          restore-keys: test-impact-map-
+
+      - name: Select tests
+        id: select
+        if: steps.map.outputs.cache-matched-key != ''
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          julia --project=$RUNNER_TEMP/tia -e 'using Pkg; Pkg.add(url = "https://github.com/ParadaCarleton/Fallout.jl", rev = "2193dc36178d27b66bc18f8fb363473b2f68033e")'
+          julia --project=$RUNNER_TEMP/tia -e '
+            using Fallout: read_map, select_testsets, report
+            map = read_map("test-impact-map.toml")
+            head = readchomp(`git rev-parse HEAD`)
+            selection = select_testsets(".", map, ENV["BASE"], head)
+            report(stdout, map, selection, ENV["BASE"], head)
+            names = sort(unique(first.(selection.reasons)))
+            # An empty test list makes runtests.jl run everything.
+            tests = isempty(selection.full) ? join(names, " ") : ""
+            open(ENV["GITHUB_OUTPUT"], "a") do io
+                println(io, "run=", isempty(names) ? "false" : "true")
+                println(io, "tests=", tests)
+            end
+          '
+
   test:
+    needs: select
+    if: ${{ !cancelled() && needs.select.result != 'failure' && needs.select.outputs.run != 'false' }}
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -77,6 +126,7 @@ jobs:
         env:
           JULIA_NUM_THREADS: auto
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels) }}
+          SELECTED_TESTS: ${{ needs.select.outputs.tests }}
         run: |
           julia --math-mode=ieee --color=yes --project=@. -e '
             import Pkg
@@ -101,6 +151,11 @@ jobs:
                         push!(test_args, arg)
                     end
                 end
+            end
+
+            # Without test labels, run the tests the select job chose
+            if isempty(test_args)
+                append!(test_args, split(get(ENV, "SELECTED_TESTS", "")))
             end
 
             # Log what we are doing
