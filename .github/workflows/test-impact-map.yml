@@ -1,0 +1,80 @@
+name: Test impact map
+# Runs every test file under coverage and records which functions each one executes
+# (TestImpactAnalysis.jl). The select job of ci.yml reads the map to pick the tests a pull
+# request can affect.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: test-impact-map-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shard:
+    name: Map shard ${{ matrix.shard }}/4
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1'
+
+      - uses: julia-actions/cache@v3
+
+      - name: Install TestImpactAnalysis and the test environment
+        run: |
+          julia --project=$RUNNER_TEMP/tia -e 'using Pkg; Pkg.add(url = "https://github.com/ParadaCarleton/TestImpactAnalysis.jl", rev = "da1dd6dd0b97386f44b9255688d64576b9329492"); Pkg.add("TestEnv")'
+          julia --project=. -e '
+            pushfirst!(LOAD_PATH, joinpath(ENV["RUNNER_TEMP"], "tia"))
+            using TestEnv
+            TestEnv.activate()
+            cp(dirname(Base.active_project()), joinpath(ENV["RUNNER_TEMP"], "testenv"))
+          '
+          julia --project=$RUNNER_TEMP/testenv -e 'using Pkg; Pkg.precompile()'
+
+      - name: Map shard
+        env:
+          JULIA_NUM_THREADS: '2'
+        run: >
+          julia --project=$RUNNER_TEMP/tia -e 'using TestImpactAnalysis; main(ARGS)' build
+          --suites test --suite-pattern '^(?!runtests\.jl$).*\.jl$'
+          --project $RUNNER_TEMP/testenv --jobs 2 --timeout 7200
+          --shard ${{ matrix.shard }}/4 --map shard-${{ matrix.shard }}.toml
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-impact-shard-${{ matrix.shard }}
+          path: shard-${{ matrix.shard }}.toml
+
+  merge:
+    needs: shard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1'
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: test-impact-shard-*
+          merge-multiple: true
+
+      - name: Merge shards
+        run: |
+          julia --project=$RUNNER_TEMP/tia -e 'using Pkg; Pkg.add(url = "https://github.com/ParadaCarleton/TestImpactAnalysis.jl", rev = "da1dd6dd0b97386f44b9255688d64576b9329492")'
+          julia --project=$RUNNER_TEMP/tia -e 'using TestImpactAnalysis; main(ARGS)' merge --map test-impact-map.toml --in shard-1.toml --in shard-2.toml --in shard-3.toml --in shard-4.toml
+
+      - uses: actions/cache/save@v6
+        with:
+          path: test-impact-map.toml
+          key: test-impact-map-${{ github.sha }}
