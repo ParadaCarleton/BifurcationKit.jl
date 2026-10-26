@@ -156,6 +156,19 @@ function probe_run(label, eigls)
     catch exception
         "FAILED $(first(sprint(showerror, exception), 60))"
     end
+    # Fourier content of the guess's complex amplitude A = u1 + i u2: a travelling wave has one of the modes ±k only
+    A = (uold[1:n] .- hopf.x[1:n]) .+ im .* (uold[(n + 1):2n] .- hopf.x[(n + 1):2n])
+    X = collect(LinRange(-pi, pi, n))
+    modes = [k => round(abs(sum(A .* exp.(-im * k .* X))) / n, digits = 3) for k in -3:3]
+    println("PROBE-GUESS $label | |A_k| $modes")
+    # per step: unstable count, the eigenvalue nearest 0, and the largest |λ|
+    for (step, eiginfo) in pairs(br_tw.eig)
+        λ = eiginfo.eigenvals
+        nearest = λ[argmin(abs.(λ))]
+        println(
+            "PROBE-EIG $label | step $step r $(round(br_tw.branch.param[step], digits = 4)) n_unstable $(br_tw.branch.n_unstable[step]) n_imag $(br_tw.branch.n_imag[step]) | nearest 0: $(round(nearest, sigdigits = 3)) | max |λ| $(round(maximum(abs, λ), sigdigits = 3)) | count $(length(λ)) | top real $(round.(sort(real.(λ), rev = true)[1:min(4, end)], sigdigits = 3))",
+        )
+    end
     sp = br_tw.specialpoint
     println(
         "PROBE $label | hopf ind_ev $(hopf.ind_ev) imag signs $(sign.(imag.(λs[hopf.ind_ev - 3:hopf.ind_ev]))) |v1'v2| $(round(abs(dot(v1, v2)), digits = 3)) | ‖u‖ $(round(norm(uold), digits = 3)) | tw speed0 $(round(br_tw.branch.param[1], digits = 4)) | sp types $([pt.type for pt in sp]) params $([round(pt.param, digits = 4) for pt in sp]) | fold $fold",
@@ -163,10 +176,7 @@ function probe_run(label, eigls)
     return nothing
 end
 let
-    for seed in 1:12
+    for seed in 1:4
         probe_run("seed $seed", EigArpack(1.0, :LM; v0 = randn(MersenneTwister(seed), 100)))
-    end
-    for draw in 1:6
-        probe_run("default v0 $draw", EigArpack(1.0, :LM))
     end
 end
