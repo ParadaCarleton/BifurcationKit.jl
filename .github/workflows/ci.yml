@@ -8,7 +8,8 @@ on:
 jobs:
   select:
     # Picks the test files a pull request can affect (Fallout.jl), from the
-    # map that test-impact-map.yml builds on master. Without a map, every test runs.
+    # map that test-impact-map.yml builds on master. Without a map of the PR's base commit,
+    # or if this job fails, every test runs.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     outputs:
@@ -29,7 +30,6 @@ jobs:
         with:
           path: test-impact-map.toml
           key: test-impact-map-${{ github.event.pull_request.base.sha }}
-          restore-keys: test-impact-map-
 
       - name: Select tests
         id: select
@@ -44,7 +44,9 @@ jobs:
             head = readchomp(`git rev-parse HEAD`)
             selection = select_testsets(".", map, ENV["BASE"], head)
             report(stdout, map, selection, ENV["BASE"], head)
-            names = sort(unique(first.(selection.reasons)))
+            # A test file that failed while mapping has partial coverage, so it always runs.
+            failed = [name for (name, coverage) in map.testsets if coverage.status != "ok"]
+            names = sort(unique(vcat(first.(selection.reasons), failed)))
             # An empty test list makes runtests.jl run everything.
             tests = isempty(selection.full) ? join(names, " ") : ""
             open(ENV["GITHUB_OUTPUT"], "a") do io
@@ -55,7 +57,7 @@ jobs:
 
   test:
     needs: select
-    if: ${{ !cancelled() && needs.select.result != 'failure' && needs.select.outputs.run != 'false' }}
+    if: ${{ !cancelled() && needs.select.outputs.run != 'false' }}
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     strategy:
