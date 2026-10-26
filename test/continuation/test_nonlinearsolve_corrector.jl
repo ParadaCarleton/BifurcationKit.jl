@@ -91,6 +91,12 @@ opts_bratu = ContinuationPar(
         @test any(diff(br.branch.param) .< 0)
     end
 
+    @testset "every corrector callback carries the predictor and the step length" begin
+        carries_predictor(state; fromNewton = true, kwargs...) = fromNewton || (state.ds isa Real && state.z_pred isa BorderedArray && (state.step > 0 || (state.x == state.z_pred.u && state.p == state.z_pred.p)))
+        br = continuation(prob_bratu, PALC(; corrector = NonlinearSolveCorrector(exact)), opts_bratu; callback_newton = carries_predictor)
+        @test length(br.sol) == length(br_reference.sol)
+    end
+
     @testset "other algorithms stay on the branch" begin
         # a modified Newton method (Jacobian reuse) or a trust region takes other steps: the points still solve F = 0 on the same branch
         for alg in (
