@@ -7,16 +7,6 @@ abstract type AbstractGFloquetSolver <: AbstractFloquetSolver end
 convert_to_GEV(l::AbstractGEigenSolver, B) = l
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
-    gev(l, A, B, nev; kwargs...)
-
-Solve the generalized eigenvalue problem ``A x = \\lambda B x`` using `l`.
-
-# Arguments
-- `l::AbstractEigenSolver`: the eigensolver configuration (controls sorting via `l.which`).
-- `A`, `B`: the matrix (or operators) pair defining ``A x = \\lambda B x``.
-- `nev`: number of requested eigenvalues.
-"""
-"""
     is_finite_eigenpair(λ, v, B)
 
 Whether `(λ, v)` is a finite eigenpair of the pencil `(A, B)`. With a singular `B`, rounding turns an
@@ -28,6 +18,16 @@ function is_finite_eigenpair(λ, v, B)
     return isfinite(λ) && LA.norm(B * v, 1) > rounding * LA.norm(v, 1)
 end
 
+"""
+    gev(l, A, B, nev; kwargs...)
+
+Solve the generalized eigenvalue problem ``A x = \\lambda B x`` using `l`.
+
+# Arguments
+- `l::AbstractEigenSolver`: the eigensolver configuration (controls sorting via `l.which`).
+- `A`, `B`: the matrix (or operators) pair defining ``A x = \\lambda B x``.
+- `nev`: number of requested eigenvalues.
+"""
 function gev(eig::DefaultEig, A, B, nev; kwargs...)
     # we convert to Array so we can call it on small sparse matrices
     Ad, Bd = __to_array_for_eig(A), __to_array_for_eig(B)
