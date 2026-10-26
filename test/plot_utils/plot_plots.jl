@@ -1,7 +1,7 @@
 using BifurcationKit
 import Plots: plot
-BifurcationKit.set_plot_backend!(BK.BK_Plots())
 const BK = BifurcationKit
+BifurcationKit.set_plot_backend!(BK.BK_Plots())
 
 let
     BK.plot_periodic_potrap(rand(10*100+1)|>vec, 10, 100; ratio = 1)

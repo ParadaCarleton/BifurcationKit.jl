@@ -1,4 +1,5 @@
-using Test
+using Test, BifurcationKit
+const BK = BifurcationKit
 
 let
     lens1 = @optic _.a
