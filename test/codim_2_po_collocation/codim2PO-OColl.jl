@@ -103,7 +103,13 @@ for jma in (BK.MinAug(), BK.MinAugMatrixBased(), ), usehessian in (true, false),
                     )
     @test all(minimum(abs.(Complex(0,pi) .- x.eigenvals)) < 1e-3 for x in pd_po_coll.eig)
     @test pd_po_coll.kind isa BK.PDPeriodicOrbitCont
-    get_normal_form(pd_po_coll, 2)
+    # the branch records its endpoints among its special points: take the first codim 2 point by its type
+    @info "special points of the PD curve" jma usehessian steigen types = [pt.type for pt in pd_po_coll.specialpoint]
+    codim2 = findfirst(pt -> pt.type in (:cusp, :R1, :R2, :R3, :R4, :gpd, :ch), pd_po_coll.specialpoint)
+    @test ~isnothing(codim2)
+    if ~isnothing(codim2)
+        get_normal_form(pd_po_coll, codim2)
+    end
 end
 ################################################################################
 # find the NS case
