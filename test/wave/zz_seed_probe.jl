@@ -162,11 +162,15 @@ function probe_run(label, eigls)
     modes = [k => round(abs(sum(A .* exp.(-im * k .* X))) / n, digits = 3) for k in -3:3]
     println("PROBE-GUESS $label | |A_k| $modes")
     # per step: unstable count, the eigenvalue nearest 0, and the largest |λ|
-    for (step, eiginfo) in pairs(br_tw.eig)
-        λ = eiginfo.eigenvals
+    for point in br_tw.branch
+        matches = filter(eiginfo -> eiginfo.step == point.step, br_tw.eig)
+        if isempty(matches)
+            continue
+        end
+        λ = first(matches).eigenvals
         nearest = λ[argmin(abs.(λ))]
         println(
-            "PROBE-EIG $label | step $step r $(round(br_tw.branch.param[step], digits = 4)) n_unstable $(br_tw.branch.n_unstable[step]) n_imag $(br_tw.branch.n_imag[step]) | nearest 0: $(round(nearest, sigdigits = 3)) | max |λ| $(round(maximum(abs, λ), sigdigits = 3)) | count $(length(λ)) | top real $(round.(sort(real.(λ), rev = true)[1:min(4, end)], sigdigits = 3))",
+            "PROBE-EIG $label | step $(point.step) r $(round(point.param, digits = 4)) n_unstable $(point.n_unstable) n_imag $(point.n_imag) | nearest 0: $(round(nearest, sigdigits = 3)) | max |λ| $(round(maximum(abs, λ), sigdigits = 3)) | count $(length(λ)) | top real $(round.(sort(real.(λ), rev = true)[1:min(4, end)], sigdigits = 3))",
         )
     end
     sp = br_tw.specialpoint
