@@ -1,5 +1,7 @@
 using Test, BifurcationKit, LinearAlgebra
 using NonlinearSolve: NewtonRaphson
+# loads the extension that `NonlinearSolveCorrector` needs; `import`, as both packages export `BorderingBLS`
+import BorderedLinearSolve
 const BK = BifurcationKit
 ####################################################################################################
 # the pure rules of CorrectorQuality
