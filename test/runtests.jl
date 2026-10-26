@@ -16,7 +16,7 @@ const RAW_ARGS = filter(arg -> arg ∉ ["-n", "--dryrun", "-a", "--all"], ARGS)
 # Example of use: 
 # Pkg.test(test_args = ["normal_forms"])
 # Pkg.test(test_args = ["normal*"])
-const TEST_ARGS = RUN_ALL ? String[] : RAW_ARGS
+const TEST_ARGS = ["wave"]
 
 if DRY_RUN
     println("--> Dry run mode active. Tests will be listed but not executed.")

@@ -114,6 +114,7 @@ out = @time BK.solve(prob, Newton(), opt_newton, normN = norminf)
 
 opts_br = ContinuationPar(dsmin = 0.001, dsmax = 0.15, ds = 0.001, p_max = 2.5, detect_bifurcation = 3, nev = 9, plot_every_step = 50, newton_options = (@set opt_newton.verbose = false), max_steps = 30, n_inversion = 8, max_bisection_steps=20)
 br = continuation(prob, PALC(), opts_br, verbosity = 0)
+println("DIAG trivial br: params=", [pt.param for pt in br.branch], " specialpoints=", [(sp.type, sp.param, sp.step, sp.status) for sp in br.specialpoint])
 end
 ####################################################################################################
 # we test the jacobian
@@ -195,6 +196,8 @@ let
 
     @reset opt_cont_br.newton_options.eigsolver = BK.DefaultGEig(B = diagm(0=>vcat(ones(2n),0)))
     br = continuation((@set tw_model.jacobian = BK.FullLU()), wave0, PALC(), opt_cont_br; verbosity = 0)
+    println("DIAG wave br: steps=", length(br), " params=", [pt.param for pt in br.branch])
+    println("DIAG wave br specialpoints=", [(sp.type, sp.param, sp.step, sp.status, sp.precision) for sp in br.specialpoint])
     br_fold = continuation(br, 1, (@optic _.c3); jacobian_ma = BK.MinAug(), usehessian = false, verbosity=2)
     show(br)
 
