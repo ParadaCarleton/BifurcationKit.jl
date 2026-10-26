@@ -115,7 +115,7 @@ $(TYPEDSIGNATURES)
 function applyD!(pb::TWModel, out, ss, u)
     for (D, s) in zip(pb.∂, ss)
         # out .-=  s .* (D * u)
-        LA.mul!(out, D, u, -s, 1)
+        LA.mul!(out, D, u, -s, true)
     end
     out
 end
