@@ -7,7 +7,7 @@ on:
 
 jobs:
   select:
-    # Picks the test files a pull request can affect (TestImpactAnalysis.jl), from the
+    # Picks the test files a pull request can affect (Fallout.jl), from the
     # map that test-impact-map.yml builds on master. Without a map, every test runs.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -37,9 +37,9 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
-          julia --project=$RUNNER_TEMP/tia -e 'using Pkg; Pkg.add(url = "https://github.com/ParadaCarleton/TestImpactAnalysis.jl", rev = "da1dd6dd0b97386f44b9255688d64576b9329492")'
+          julia --project=$RUNNER_TEMP/tia -e 'using Pkg; Pkg.add(url = "https://github.com/ParadaCarleton/Fallout.jl", rev = "2193dc36178d27b66bc18f8fb363473b2f68033e")'
           julia --project=$RUNNER_TEMP/tia -e '
-            using TestImpactAnalysis: read_map, select_testsets, report
+            using Fallout: read_map, select_testsets, report
             map = read_map("test-impact-map.toml")
             head = readchomp(`git rev-parse HEAD`)
             selection = select_testsets(".", map, ENV["BASE"], head)
