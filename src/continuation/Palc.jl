@@ -434,7 +434,14 @@ function _corrector!(state::AbstractContinuationState,
                      callback;
                      kwargs...)
     if state.z_pred.p <= it.contparams.p_min || state.z_pred.p >= it.contparams.p_max
-        state.z_pred.p = clamp_predp(state.z_pred.p, it)
+        bound = clamp_predp(state.z_pred.p, it)
+        # The predictor stops where its line meets the bound. Clamping p alone leaves u a full step out, from which
+        # the fixed-parameter corrector can converge onto another branch.
+        if isindomain(it, state.z.p)
+            fraction = (bound - state.z.p) / (state.z_pred.p - state.z.p)
+            VI.add!(state.z_pred, state.z, 1 - fraction, fraction)
+        end
+        state.z_pred.p = bound
         sol = _corrector_at_bound(alg.corrector, it, state; kwargs..., callback)
     else
         sol = _corrector_palc(alg.corrector, it, state, getdot(alg);
