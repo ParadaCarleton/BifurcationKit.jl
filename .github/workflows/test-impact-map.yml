@@ -45,7 +45,7 @@ jobs:
           JULIA_NUM_THREADS: '2'
         run: >
           julia --project=$RUNNER_TEMP/tia -e 'using Fallout; main(ARGS)' build
-          --suites test --suite-pattern '^(?!runtests\.jl$).*\.jl$'
+          --source src --source ext --suites test --suite-pattern '^(?!runtests\.jl$).*\.jl$'
           --project $RUNNER_TEMP/testenv --jobs 2 --timeout 7200
           --shard ${{ matrix.shard }}/4 --map shard-${{ matrix.shard }}.toml
 
