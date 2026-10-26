@@ -54,6 +54,11 @@ jobs:
           name: test-impact-shard-${{ matrix.shard }}
           path: shard-${{ matrix.shard }}.toml
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-impact-logs-${{ matrix.shard }}
+          path: shard-${{ matrix.shard }}.toml.work
+
   merge:
     needs: shard
     runs-on: ubuntu-latest
