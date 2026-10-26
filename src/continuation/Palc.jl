@@ -44,6 +44,43 @@ _get_apply_dot(dt::DotTheta) = dt.apply!
 (dt::DotTheta)(a::BorderedArray{vec, T}, θ::T) where {vec, T} = dt(a.u, a.p, θ)
 
 """
+$(TYPEDEF)
+
+The dot product ``\\langle x, y\\rangle = \\sum_i w_i \\bar x_i y_i`` whose weights ``w`` change along the branch: `weights!(weights, z)` sets them at each accepted point `z::BorderedArray` of a continuation, and at its start point.
+A step's predictor, corrector and acceptance tests all use the weights of the point the step starts from.
+Use it as `PALC(dotθ = DotTheta(PointWeightedDot(weights!, weights)))`, with `weights` a vector like the state `z.u`.
+
+$(TYPEDFIELDS)
+"""
+struct PointWeightedDot{Tf, Tw <: AbstractVector}
+    "`weights!(weights, z)` writes the weights at the point `z` into `weights`."
+    weights!::Tf
+    "weights of the current point."
+    weights::Tw
+end
+(dt::PointWeightedDot)(x, y) = LA.dot(x, LA.Diagonal(dt.weights), y)
+
+"""The operator of a [`PointWeightedDot`](@ref) applied in place, `x .*= weights`."""
+struct PointWeightScaling{Tw <: AbstractVector}
+    weights::Tw
+end
+(scaling::PointWeightScaling)(x) = (x .*= scaling.weights; x)
+
+DotTheta(dt::PointWeightedDot) = DotTheta(dt, PointWeightScaling(dt.weights))
+
+"""
+$(TYPEDSIGNATURES)
+
+Sets the weights of the dot product `dt` at the accepted point `z`; returns whether `dt` has point-dependent weights.
+"""
+reweight!(dt::DotTheta, z::BorderedArray) = reweight!(dt.dot, z)
+reweight!(::Any, ::BorderedArray) = false
+function reweight!(dt::PointWeightedDot, z::BorderedArray)
+    dt.weights!(dt.weights, z)
+    return true
+end
+
+"""
 $(TYPEDSIGNATURES)
 
 Cosine, in the norm of `dt`, of the angle between the tangent `τ` at `z` and the chord from `z` to `znew`. An empty chord has cosine 1: it does not turn.
@@ -141,6 +178,7 @@ function initialize!(state::AbstractContinuationState,
                      nrm = false)
     # for the initialization step, we do not use a Bordered predictor which 
     # fails at bifurcation points. Instead, we start with a Secant predictor
+    reweight!(getdot(alg), state.z_old)
     gettangent!(state, iter, Secant(), getdot(alg))
     # we want to start at (u0, p0), not at (u1, p1)
     _copyto!(state.z, state.z_old)
@@ -168,11 +206,16 @@ function _getpredictor_palc!(state::AbstractContinuationState,
     # state.z has been updated only if converged(state) == true
     if converged(state)
         @debug "Update tangent"
+        reweighted = reweight!(getdot(alg), state.z)
         if isnothing(state.next_tangent)
             gettangent!(state, iter, alg.tangent, getdot(alg))
         else
             _copyto!(state.τ, state.next_tangent)
             state.next_tangent = nothing
+            # the orientation test normalised the tangent in the weights of the previous point
+            if reweighted
+                VI.scale!(state.τ, inv(getdot(alg)(state.τ, getθ(iter))))
+            end
         end
     end
     # then update the predictor state.z_pred
