@@ -4,7 +4,7 @@ name: Test impact map
 # request can affect.
 on:
   push:
-    branches: [master]
+    branches: [master, tia-demo-base2]
   workflow_dispatch:
 
 concurrency:
