@@ -160,9 +160,9 @@ jobs:
 
             # Log what we are doing
             if isempty(test_args)
-                println("No specific test labels found. Running all tests.")
+                println("No test labels and no test selection. Running all tests.")
             else
-                println("Detected labels for specific tests. Running: ", join(test_args, ", "))
+                println("Running specific tests (labels, else the select job): ", join(test_args, ", "))
             end
 
             # Run tests
