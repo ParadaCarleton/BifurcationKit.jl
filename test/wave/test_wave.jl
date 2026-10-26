@@ -107,7 +107,9 @@ sol0 = zeros(par_cgl.N)
 # @test _J0 ≈ _J1
 
 prob = BifurcationKit.BifurcationProblem(Fcgl, sol0, par_cgl, (@optic _.r); J = Jcgl)
-eigls = EigArpack(1.0, :LM)
+# The Hopf eigenspaces of this O(2)-symmetric problem have dimension 2, so the eigenvectors that build the wave guess
+# below depend on Arpack's start vector. It is random by default; a fixed one makes the guess, and this file, deterministic.
+eigls = EigArpack(1.0, :LM; v0 = collect(range(1.0, 2.0; length = par_cgl.N)))
 # eigls = DefaultEig()
 opt_newton = NewtonPar(tol = 1e-9, verbose = false, eigsolver = eigls, max_iterations = 20)
 out = @time BK.solve(prob, Newton(), opt_newton, normN = norminf)
