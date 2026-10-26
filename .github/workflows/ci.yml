@@ -9,6 +9,8 @@ jobs:
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
+    # A healthy macOS job takes 3 h 03 min (job 121373509337); a hang otherwise runs to GitHub's 6 h limit.
+    timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
@@ -71,6 +73,8 @@ jobs:
 
       - name: Load packages that are not in the registry or lack PR 1353
         # Julia 1.10 ignores [sources]: BorderedLinearSolve is unregistered, and the NonlinearSolve libraries come from our fork for PR 1353
+        # It takes 7 min on macOS; its precompile hung for 6 h once (job 121475529552).
+        timeout-minutes: 30
         run: |
           julia --project=@. -e '
             import Pkg
@@ -79,6 +83,7 @@ jobs:
           '
 
       - name: Build julia package
+        timeout-minutes: 30
         uses: julia-actions/julia-buildpkg@v1
 
       - name: Run tests
