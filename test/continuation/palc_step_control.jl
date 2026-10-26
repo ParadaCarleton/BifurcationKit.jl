@@ -244,8 +244,11 @@ let
         BK.corrector!(state, iter, alg)
         state
     end
-    on_branch = BorderedArray([0.5], 1.2)
-    over_the_top = BorderedArray([-0.3], 1.2)
+    # a predictor at λ = 1.2 whose line from the current point meets p_max = 0.7 at `u`, where the corrector starts
+    fraction = (0.7 - point(φ1).p) / (1.2 - point(φ1).p)
+    meeting_bound_at(u) = BorderedArray(point(φ1).u .+ ([u] .- point(φ1).u) ./ fraction, 1.2)
+    on_branch = meeting_bound_at(0.5)
+    over_the_top = meeting_bound_at(-0.3)
     for (check, turns_back) in ((true, true), (false, false))
         alg = PALC(; tangent = Bordered(), orientation_check = check)
         # past the top of the circle the corrector lands on the way back, where the tangent points away from the previous one
@@ -343,4 +346,23 @@ let
     @test BK.getp(state) <= 0.5f0
     @test all(isfinite, state.τ.u) && isfinite(state.τ.p)
     @test all(isfinite, state.z_pred.u) && isfinite(state.z_pred.p)
+end
+####################################################################################################
+# a predictor past p_max is shortened along its line to the bound. Corrected at fixed λ from a full step out, it
+# would converge onto the parallel branch x = λ + 3
+let
+    F(x, p) = (x .- p.λ) .* (x .- p.λ .- 3)
+    prob = BifurcationProblem(F, [0.0], (λ = 0.0,), (@optic _.λ))
+    options = ContinuationPar(ds = 4.0, dsmax = 4.0, p_min = -1.0, p_max = 1.0, detect_fold = false, detect_bifurcation = 0)
+    for alg in (PALC(), PALC(; corrector = FreeParameterNewton()))
+        iter = ContIterable(prob, alg, options; verbosity = 0)
+        next = iterate(iter)
+        state = last(next)
+        while ~isnothing(next)
+            state = last(next)
+            next = iterate(iter, state)
+        end
+        @test BK.getp(state) == 1.0
+        @test state.z.u[1] ≈ 1.0
+    end
 end
