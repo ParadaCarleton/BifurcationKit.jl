@@ -239,17 +239,16 @@ dF(tw::WrapTW, x, p, dx1) = get_discretization(tw)(x, p, dx1)
 d2F(tw::WrapTW, x, p, dx1, dx2) = ForwardDiff.derivative(t -> dF(tw, x .+ t .* dx2, p, dx1), 0)
 d3F(tw::WrapTW, x, p, dx1, dx2, dx3) = ForwardDiff.derivative(t -> d2F(tw, x .+ t .* dx3, p, dx1, dx2), 0)
 
-function update!(wrap::WrapTW, iter, state::ContState)
+update!(wrap::WrapTW, iter, state::ContState) = _update_tw_section!(wrap, state, getsolution(state).u)
+
+# codim-2 continuation: the state is the minimally augmented one, whose wave part gives the section
+update!(𝐌𝐚::AbstractMinimallyAugmentedFormulation{<: WrapTW}, iter, state::ContState) = _update_tw_section!(𝐌𝐚.prob_vf, state, getvec(getx(state), 𝐌𝐚))
+
+function _update_tw_section!(wrap::WrapTW, state::ContState, wave)
     prob = get_discretization(wrap)
-    success = converged(state)
-    bisection = in_bisection(state)
-    update_section_every_step = prob.update_section_every_step
-    step = state.step
-    z = getsolution(state)
-    if success && mod_counter(step, update_section_every_step) && bisection == false
+    if converged(state) && mod_counter(state.step, prob.update_section_every_step) && in_bisection(state) == false
         @debug "[Wave problem] update section"
-        # Trapeze and Shooting need the parameters for section update:
-        updatesection!(prob, z.u)
+        updatesection!(prob, wave)
     end
     return true
 end
