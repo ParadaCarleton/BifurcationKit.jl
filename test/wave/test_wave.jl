@@ -195,7 +195,13 @@ let
 
     @reset opt_cont_br.newton_options.eigsolver = BK.DefaultGEig(B = diagm(0=>vcat(ones(2n),0)))
     br = continuation((@set tw_model.jacobian = BK.FullLU()), wave0, PALC(), opt_cont_br; verbosity = 0)
-    br_fold = continuation(br, 1, (@optic _.c3); jacobian_ma = BK.MinAug(), usehessian = false, verbosity=2)
+    # the second special point is the turning point in r, a fold where a real eigenvalue crosses zero
+    @test br.specialpoint[2].type == :bp
+    opts_fold = ContinuationPar(opt_cont_br; p_min = -1.5, p_max = -0.5, ds = 0.01, dsmax = 0.05, max_steps = 20)
+    br_fold = continuation(br, 2, (@optic _.c3), opts_fold; jacobian_ma = BK.MinAug(), usehessian = false, verbosity = 0)
+    @test br_fold.prob isa BK.FoldMAProblem
+    @test length(br_fold) > 2
+    @test maximum(br_fold.branch.param) - minimum(br_fold.branch.param) > 0.1
     show(br)
 
     BK.GEigArpack(nothing, :LR)
