@@ -246,7 +246,7 @@ update!(𝐌𝐚::AbstractMinimallyAugmentedFormulation{<: WrapTW}, iter, state:
 
 function _update_tw_section!(wrap::WrapTW, state::ContState, wave)
     prob = get_discretization(wrap)
-    if converged(state) && mod_counter(state.step, prob.update_section_every_step) && in_bisection(state) == false
+    if converged(state) && mod_counter(state.step, prob.update_section_every_step) && !in_bisection(state)
         @debug "[Wave problem] update section"
         updatesection!(prob, wave)
     end
