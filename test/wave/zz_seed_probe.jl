@@ -147,12 +147,13 @@ function probe_run(label, eigls)
         br_fold = continuation(
             br_tw,
             2,
-            (@optic _.c3);
+            (@optic _.c3),
+            ContinuationPar(br_tw.contparams; p_min = -1.5, p_max = -0.5, ds = 0.01, dsmax = 0.05, max_steps = 20);
             jacobian_ma = BK.MinAug(),
             usehessian = false,
             verbosity = 0,
         )
-        "ok $(length(br_fold)) kind $(typeof(br_fold.prob).name.name) c3 range $(round.(extrema(br_fold.branch.param), digits = 3)) steps $(length(br_fold.branch))"
+        "ok $(length(br_fold)) kind $(typeof(br_fold.prob).name.name) c3 range $(round.(extrema(br_fold.branch.param), digits = 3)) steps $(length(br_fold.branch)) r range $(round.(extrema(br_fold.branch.r), digits = 4)) end $(br_fold.specialpoint[end].type)"
     catch exception
         "FAILED $(first(sprint(showerror, exception), 60))"
     end
