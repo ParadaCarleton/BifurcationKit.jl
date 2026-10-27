@@ -202,6 +202,10 @@ let
     @test br_fold.prob isa BK.FoldMAProblem
     @test length(br_fold) > 2
     @test maximum(br_fold.branch.param) - minimum(br_fold.branch.param) > 0.1
+    # the fold's r stays in the travelling-wave branch's r range (up to one step of slack) and moves with c3
+    r_min, r_max = extrema(br.branch.param)
+    @test all(r -> r_min - 0.01 <= r <= r_max + 0.01, br_fold.branch.r)
+    @test maximum(br_fold.branch.r) - minimum(br_fold.branch.r) > 0.05
     show(br)
 
     BK.GEigArpack(nothing, :LR)
