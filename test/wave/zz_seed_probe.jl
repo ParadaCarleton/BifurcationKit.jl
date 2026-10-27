@@ -153,7 +153,9 @@ function probe_run(label, eigls)
             usehessian = false,
             verbosity = 0,
         )
-        "ok $(length(br_fold)) kind $(typeof(br_fold.prob).name.name) c3 range $(round.(extrema(br_fold.branch.param), digits = 3)) steps $(length(br_fold.branch)) r range $(round.(extrema(br_fold.branch.r), digits = 4)) end $(br_fold.specialpoint[end].type)"
+        columns = propertynames(br_fold.branch)
+        r_range = :r in columns ? round.(extrema(br_fold.branch.r), digits = 4) : "columns $columns"
+        "ok $(length(br_fold)) r_range $r_range kind $(typeof(br_fold.prob).name.name) c3 range $(round.(extrema(br_fold.branch.param), digits = 3)) steps $(length(br_fold.branch)) end $(br_fold.specialpoint[end].type)"
     catch exception
         "FAILED $(first(sprint(showerror, exception), 60))"
     end
