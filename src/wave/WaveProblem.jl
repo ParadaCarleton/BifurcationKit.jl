@@ -49,7 +49,7 @@ $(TYPEDFIELDS)
     "generator ⋅ u₀"
     ∂u₀::TDu0 = (∂ * u₀,)
     "Vector of flags, one per symmetry. When `true`, the corresponding phase condition is `⟨u - u₀, ∂⋅u₀⟩ = 0` (phase fixed relative to the reference solution `u₀`); when `false`, it reduces to `⟨u, ∂⋅u₀⟩ = 0`."
-    DAE::Vector{Bool} = fill(true, nc)
+    DAE::Vector{Bool} = fill(true, length(∂))
     "[Internal] number of constraints."
     nc::Int = 1
     "Type of jacobian for the frozen problem, one of `AutoDiff()`, `FiniteDifferences()`, `FullLU()`, `MatrixFree()` or `AutoDiffMF()`."
@@ -227,7 +227,8 @@ function (pb::TWModel)(::Val{:JacFullSparse}, ufreez::AbstractVector, par; δ = 
 end
 #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 jacobian(tw::WrapTW, x, p) = _jacobian_tw(tw, tw.jacobian, x, p)
-isinplace(tw::TWModel) = false
+isinplace(::TWModel) = false
+has_hessian(::WrapTW) = true # for Fold/hopf continuation
 @inline save_solution(::WrapTW, x, p) = x
 @inline is_symmetric(::WrapTW) = false
 @inline has_adjoint(::WrapTW) = false
@@ -238,17 +239,16 @@ dF(tw::WrapTW, x, p, dx1) = get_discretization(tw)(x, p, dx1)
 d2F(tw::WrapTW, x, p, dx1, dx2) = ForwardDiff.derivative(t -> dF(tw, x .+ t .* dx2, p, dx1), 0)
 d3F(tw::WrapTW, x, p, dx1, dx2, dx3) = ForwardDiff.derivative(t -> d2F(tw, x .+ t .* dx3, p, dx1, dx2), 0)
 
-function update!(wrap::WrapTW, iter, state::ContState)
+update!(wrap::WrapTW, iter, state::ContState) = _update_tw_section!(wrap, state, getsolution(state).u)
+
+# codim-2 continuation: the state is the minimally augmented one, whose wave part gives the section
+update!(𝐌𝐚::AbstractMinimallyAugmentedFormulation{<: WrapTW}, iter, state::ContState) = _update_tw_section!(𝐌𝐚.prob_vf, state, getvec(getx(state), 𝐌𝐚))
+
+function _update_tw_section!(wrap::WrapTW, state::ContState, wave)
     prob = get_discretization(wrap)
-    success = converged(state)
-    bisection = in_bisection(state)
-    update_section_every_step = prob.update_section_every_step
-    step = state.step
-    z = getsolution(state)
-    if success && mod_counter(step, update_section_every_step) && bisection == false
+    if converged(state) && mod_counter(state.step, prob.update_section_every_step) && !in_bisection(state)
         @debug "[Wave problem] update section"
-        # Trapeze and Shooting need the parameters for section update:
-        updatesection!(prob, z.u)
+        updatesection!(prob, wave)
     end
     return true
 end
