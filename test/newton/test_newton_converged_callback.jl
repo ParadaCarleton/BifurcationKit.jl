@@ -36,7 +36,7 @@ let
     @test BK._verdict_and(BK.NewtonConverged(), true) === BK.NewtonConverged()
     @test BK._verdict_and(BK.NewtonConverged(), false) === false
 
-    # a zero `tol` is unreachable: the correctors converge at the callback's verdict only
+    # a zero `tol` needs an exact root: the correctors converge at the callback's verdict
     unreachable = ContinuationPar(p_min = 0.0, p_max = 1.0, ds = 0.05, max_steps = 200, detect_bifurcation = 0, newton_options = NewtonPar(tol = 0.0, max_iterations = 10))
     for alg in (PALC(), MoorePenrose(), Natural())
         floored = continuation(prob, alg, unreachable; callback_newton = ScaledTolerance(1e-10))
