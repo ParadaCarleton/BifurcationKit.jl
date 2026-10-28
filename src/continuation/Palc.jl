@@ -123,7 +123,7 @@ Additional information is available on the [website](https://bifurcationkit.gith
 $(TYPEDFIELDS)
 
 """
-@with_kw struct PALC{Ttang <: AbstractTangentComputation, Tbls <: AbstractLinearSolver, T, Tdot, Tcor, Tctl} <: AbstractContinuationAlgorithm
+@with_kw struct PALC{Ttang <: AbstractTangentComputation, Tbls <: AbstractLinearSolver, T, Tdot, Tcor, Tctl, Todot} <: AbstractContinuationAlgorithm
     "Tangent (predictor), must be a subtype of `AbstractTangentComputation`. For example `Secant()` or `Bordered()`, etc."
     tangent::Ttang = Secant()
     "`θ` is a parameter in the arclength constraint. It is very **important** to tune it. It should be tuned for the continuation to work properly especially in the case of large problems where the < x - x_0, dx_0 > component in the constraint equation might be favoured too much. Also, large thetas favour p as the corresponding term in N involves the term 1-theta."
@@ -140,6 +140,8 @@ $(TYPEDFIELDS)
     step_control::Tctl = nothing
     "Orientation test: reject a step whose new tangent has a negative dot product with the previous one (they point more than `π / 2` apart), as when the corrector converged onto a nearby part of the curve that runs the other way. A `Secant` tangent is the chord to the new point, so the test costs one dot product. A `Bordered` tangent is oriented as the curve is, by the sign of the determinant of the bordered matrix `[J dFdl; τ']` (Allgower and Georg, *Introduction to Numerical Continuation Methods*, definition (2.1.7)), with the sign fixed to the direction of travel at the start. That determinant needs a `MatrixBLS` solver and a dense LU factorisation of size `n + 1` per step, `O(n^3)`. Off by default."
     orientation_check::Bool = false
+    "The `DotTheta` whose sign orients a `Bordered` tangent along the previous one when the determinant does not (`orientation_check` and `max_turn` off). It defaults to `dotθ`. Pass another when `dotθ`'s weights shrink a coordinate that should decide the direction, as point weights near a saturated variable can past a fold. It is reset at each accepted point as `dotθ` is (`reweight!`)."
+    orientation_dot::Todot = dotθ
 
     @assert ~(tangent isa Constant) "You cannot use a constant predictor with PALC"
     @assert 0 <= θ <= 1 "θ must belong to [0, 1]"
@@ -148,6 +150,17 @@ end
 get_bordered_linsolver(alg::PALC) = alg.bls
 getdot(alg::PALC) = alg.dotθ
 getθ(alg::PALC) = alg.θ
+"The `DotTheta` that orients a `Bordered` tangent without the determinant: `orientation_dot` for `PALC`, the dot product otherwise."
+get_orientation_dot(alg::PALC) = alg.orientation_dot
+get_orientation_dot(alg) = getdot(alg)
+get_orientation_dot(it::ContIterable) = get_orientation_dot(it.alg)
+"Reset the weights of `alg`'s orientation dot at `z` when it is not the dot product itself, which the caller resets."
+function reweight_orientation!(alg, z::BorderedArray)
+    if get_orientation_dot(alg) !== getdot(alg)
+        reweight!(get_orientation_dot(alg), z)
+    end
+    return nothing
+end
 # we also extend this for ContIterable
 getdot(it::ContIterable) = getdot(it.alg)
 getθ(it::ContIterable) = oftype(it.contparams.ds, getθ(it.alg))
@@ -179,6 +192,7 @@ function initialize!(state::AbstractContinuationState,
     # for the initialization step, we do not use a Bordered predictor which 
     # fails at bifurcation points. Instead, we start with a Secant predictor
     reweight!(getdot(alg), state.z_old)
+    reweight_orientation!(alg, state.z_old)
     gettangent!(state, iter, Secant(), getdot(alg))
     # we want to start at (u0, p0), not at (u1, p1)
     _copyto!(state.z, state.z_old)
@@ -207,6 +221,7 @@ function _getpredictor_palc!(state::AbstractContinuationState,
     if converged(state)
         @debug "Update tangent"
         reweighted = reweight!(getdot(alg), state.z)
+        reweight_orientation!(alg, state.z)
         if isnothing(state.next_tangent)
             gettangent!(state, iter, alg.tangent, getdot(alg))
         else

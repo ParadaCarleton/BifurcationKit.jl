@@ -95,13 +95,14 @@ bordered_determinant_sign(lbs::AbstractBorderedLinearSolver, ::AbstractContinuat
 """
 $(TYPEDSIGNATURES)
 
-The `Bordered` tangent at the point `z`, a new `BorderedArray` with ``\\|τ\\|_θ = 1``. The border row is the tangent `state.τ` of the previous point. With `by_determinant = false` the new tangent takes its direction (`<τ, τ_old> > 0`); with `by_determinant = true` it is oriented as the curve is, by the sign of the determinant of the bordered matrix (`det([J dFdl; τ']) > 0`, Allgower and Georg (2.1.7)) times `state.cache.orientation`, and can point against the previous tangent.
+The `Bordered` tangent at the point `z`, a new `BorderedArray` with ``\\|τ\\|_θ = 1``. The border row is the tangent `state.τ` of the previous point. With `by_determinant = false` the new tangent takes its direction (`<τ, τ_old> > 0` in `orientation_dot`, `dotθ` by default); with `by_determinant = true` it is oriented as the curve is, by the sign of the determinant of the bordered matrix (`det([J dFdl; τ']) > 0`, Allgower and Georg (2.1.7)) times `state.cache.orientation`, and can point against the previous tangent.
 """
 function bordered_tangent(state::AbstractContinuationState,
                           iter::AbstractContinuationIterable,
                           z::BorderedArray,
                           dotθ;
-                          by_determinant::Bool = false)
+                          by_determinant::Bool = false,
+                          orientation_dot = dotθ)
     (iter.verbosity > 0) && println("Predictor: Bordered")
     τ = state.τ
     θ = getθ(iter)
@@ -126,7 +127,7 @@ function bordered_tangent(state::AbstractContinuationState,
     if by_determinant
         α *= bordered_determinant_sign(get_bordered_linsolver(iter), iter, state, J, dFdl) * state.cache.orientation
     else
-        α *= sign(dotθ(τ.u, τu, τ.p, τp, θ))
+        α *= sign(orientation_dot(τ.u, τu, τ.p, τp, θ))
     end
 
     τnew = _copy(τ)
@@ -140,7 +141,7 @@ function gettangent!(state::AbstractContinuationState,
                     iter::AbstractContinuationIterable,
                     ::Bordered, 
                     dotθ)
-    τ = bordered_tangent(state, iter, state.z, dotθ; by_determinant = orients_by_determinant(iter))
+    τ = bordered_tangent(state, iter, state.z, dotθ; by_determinant = orients_by_determinant(iter), orientation_dot = get_orientation_dot(iter))
     _copyto!(state.τ.u, τ.u)
     state.τ.p = τ.p
     return state.τ
