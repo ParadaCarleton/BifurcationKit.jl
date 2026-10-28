@@ -384,6 +384,7 @@ function _rejects_newton_step!(check::PALCStepCheck, control::CorrectorQuality, 
     distance = something(measured, convert(𝒯, sqrt(getdot(check.alg)(previous.u, previous.u, Δp, Δp, getθ(check.iter)))))
     _record_iterate!(previous, x, p)
     if rejects_step(control, cache.quality, distance, check.tol)
+        @debug "corrector quality rejected" _group = :trace reason = :quality distance = distance newton_steps = cache.quality.steps previous_distance = cache.quality.previous
         state.cache = _update(cache; rejected = true)
         if check.iter.contparams.newton_options.verbose
             printstyled("Step rejected by the corrector quality tests at Newton step $(cache.quality.steps + 1)\n", color = :red)
