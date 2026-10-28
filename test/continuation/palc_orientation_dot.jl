@@ -17,6 +17,11 @@ let
     @test maximum(xs) > 0.5
     @test all(diff(xs) .> 0)
 
+    # Any callable with a DotTheta's arguments orients; only its sign is read.
+    plain_product(u1, u2, p1, p2, θ) = dot(u1, u2) + p1 * p2
+    called = continuation(prob, PALC(; tangent = Bordered(), θ = 0.5, dotθ = shrunk(), orientation_dot = plain_product), options)
+    @test maximum(only(s.x) for s in called.sol) > 0.5
+
     # Oriented by the shrunk dot product, the tangent turns back at the fold.
     shrunk_oriented = continuation(prob, PALC(; tangent = Bordered(), θ = 0.5, dotθ = shrunk()), options)
     @test maximum(only(s.x) for s in shrunk_oriented.sol) < 0.5
