@@ -142,6 +142,8 @@ $(TYPEDFIELDS)
     orientation_check::Bool = false
     "The product `(u1, u2, p1, p2, θ)`, as a `DotTheta` is called, whose sign orients a `Bordered` tangent along the previous one when the determinant does not (`orientation_check` and `max_turn` off). It defaults to `dotθ`. Pass another when `dotθ`'s weights shrink a coordinate that should decide the direction, as point weights near a saturated variable can past a fold. It is reset at each accepted point as `dotθ` is (`reweight!`)."
     orientation_dot::Todot = dotθ
+    "EXPERIMENT: `(x_old, p_old, x, p) -> length` of a Newton step for `step_control`, or `nothing` for the arc length norm."
+    step_distance::Any = nothing
 
     @assert ~(tangent isa Constant) "You cannot use a constant predictor with PALC"
     @assert 0 <= θ <= 1 "θ must belong to [0, 1]"
@@ -364,10 +366,12 @@ function _rejects_newton_step!(check::PALCStepCheck, control::CorrectorQuality, 
     cache = state.cache
     previous = cache.previous
     𝒯 = eltype(check.iter)
+    custom = check.alg.step_distance
+    measured = isnothing(custom) ? nothing : convert(𝒯, custom(previous.u, previous.p, x, p))
     # previous.u becomes the Newton step x - previous.u, then the iterate x
     previous.u = VI.add!!(previous.u, x, one(𝒯), -one(𝒯))
     Δp = p - previous.p
-    distance = convert(𝒯, sqrt(getdot(check.alg)(previous.u, previous.u, Δp, Δp, getθ(check.iter))))
+    distance = something(measured, convert(𝒯, sqrt(getdot(check.alg)(previous.u, previous.u, Δp, Δp, getθ(check.iter)))))
     _record_iterate!(previous, x, p)
     if rejects_step(control, cache.quality, distance, check.tol)
         state.cache = _update(cache; rejected = true)
