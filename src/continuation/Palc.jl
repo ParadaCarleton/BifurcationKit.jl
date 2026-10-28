@@ -144,6 +144,8 @@ $(TYPEDFIELDS)
     orientation_dot::Todot = dotθ
     "EXPERIMENT: `(x_old, p_old, x, p) -> length` of a Newton step for `step_control`, or `nothing` for the arc length norm."
     step_distance::Any = nothing
+    "EXPERIMENT: `(u, τu, ds) -> ds` applied after the tangent and before the predictor, or `nothing`."
+    step_rescale::Any = nothing
 
     @assert ~(tangent isa Constant) "You cannot use a constant predictor with PALC"
     @assert 0 <= θ <= 1 "θ must belong to [0, 1]"
@@ -201,6 +203,10 @@ function initialize!(state::AbstractContinuationState,
     if tracks_turn(alg)
         init_orientation_check!(state, iter, alg)
     end
+    # EXPERIMENT: a step-size hook that sees the tangent the predictor will use
+    if !isnothing(alg.step_rescale)
+        state.ds = alg.step_rescale(state.z.u, state.τ.u, state.ds)
+    end
     # then update the predictor state.z_pred
     update_predictor!(state, iter, alg, nrm)
 end
@@ -234,6 +240,10 @@ function _getpredictor_palc!(state::AbstractContinuationState,
                 VI.scale!(state.τ, inv(getdot(alg)(state.τ, getθ(iter))))
             end
         end
+    end
+    # EXPERIMENT: a step-size hook that sees the tangent the predictor will use
+    if !isnothing(alg.step_rescale)
+        state.ds = alg.step_rescale(state.z.u, state.τ.u, state.ds)
     end
     # then update the predictor state.z_pred
     update_predictor!(state, iter, alg, nrm)
