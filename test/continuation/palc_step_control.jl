@@ -40,7 +40,7 @@ let
     @test BK.rejects_step(lenient, quality, 0.4, tol)
     @test ~BK.rejects_step(lenient, after_first, 0.3, tol)
     @test BK.observe(lenient, after_first, 0.1, tol).deceleration ≈ after_second.deceleration
-    @test CorrectorQuality{Float32}(lenient).rejects_contraction == false
+    @test !CorrectorQuality{Float32}(lenient).rejects_contraction
 
     # a test that is off neither rejects a step nor slows the next one
     off = CorrectorQuality(max_distance = nothing, max_contraction = nothing)
