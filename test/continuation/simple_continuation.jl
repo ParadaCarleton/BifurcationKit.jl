@@ -242,9 +242,8 @@ let
     br0 = continuation(prob, PALC(), (@set opts.max_steps = 3), callback_newton = (state; kwargs...)->(true));
     BK.get_solution(br0, 1)
 
-    # every call from the PALC corrector carries the step's predictor and length; a call without them stops the branch
-    carries_predictor(state; fromNewton = true, kwargs...) = fromNewton || (state.ds isa Real && state.z_pred isa BorderedArray && (state.step > 0 || (state.x == state.z_pred.u && state.p == state.z_pred.p)))
-    @test length(continuation(prob, PALC(), (@set opts.max_steps = 3), callback_newton = carries_predictor)) == length(br0)
+    carries_start_predictor_and_length_with_one_closing_call(state; fromNewton = true, kwargs...) = fromNewton || (state.ds isa Real && state.z0 isa BorderedArray && state.z_pred isa BorderedArray && !(haskey(state, :J) && haskey(state, :closing)) && (haskey(state, :J) || state.step == 0 || haskey(state, :closing)) && (state.step > 0 || (state.x == state.z_pred.u && state.p == state.z_pred.p)))
+    @test length(continuation(prob, PALC(), (@set opts.max_steps = 3), callback_newton = carries_start_predictor_and_length_with_one_closing_call)) == length(br0)
 
     ###### Used to check type stability of the methods
     @test isconcretetype(return_type(ContIterable, typeof((prob, PALC(), opts))))

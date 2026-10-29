@@ -91,9 +91,9 @@ opts_bratu = ContinuationPar(
         @test any(diff(br.branch.param) .< 0)
     end
 
-    @testset "every corrector callback carries the predictor and the step length" begin
-        carries_predictor(state; fromNewton = true, kwargs...) = fromNewton || (state.ds isa Real && state.z_pred isa BorderedArray && (state.step > 0 || (state.x == state.z_pred.u && state.p == state.z_pred.p)))
-        br = continuation(prob_bratu, PALC(; corrector = NonlinearSolveCorrector(exact)), opts_bratu; callback_newton = carries_predictor)
+    @testset "every corrector callback carries the start, the predictor and the step length" begin
+        carries_start_predictor_and_length_with_one_closing_call(state; fromNewton = true, kwargs...) = fromNewton || (state.ds isa Real && state.z0 isa BorderedArray && state.z_pred isa BorderedArray && !(haskey(state, :J) && haskey(state, :closing)) && (haskey(state, :J) || state.step == 0 || haskey(state, :closing)) && (state.step > 0 || (state.x == state.z_pred.u && state.p == state.z_pred.p)))
+        br = continuation(prob_bratu, PALC(; corrector = NonlinearSolveCorrector(exact)), opts_bratu; callback_newton = carries_start_predictor_and_length_with_one_closing_call)
         @test length(br.sol) == length(br_reference.sol)
     end
 
