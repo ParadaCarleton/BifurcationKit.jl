@@ -108,11 +108,11 @@ opts_bratu = ContinuationPar(
     end
 
     @testset "the callback sees every Newton step and its verdict stops the corrector" begin
-        # `shown` counts, by number of Newton steps taken, the correctors which showed the callback an iterate; `ending` holds the step of the last one; `mismatches` counts the closing calls which report another count
+        # `shown` counts, by number of the Newton step (from 1), the correctors which showed the callback an iterate; `ending` holds the step of the last one; `mismatches` counts the closing calls which report another count
         shown, ending, mismatches = zeros(Int, 50), zeros(Int, 1), zeros(Int, 1)
         function record(state; fromNewton = true, kwargs...)
             if !fromNewton && haskey(state, :itlinear)
-                shown[begin + state.step] += 1
+                shown[state.step] += 1
                 ending[1] = state.step
             elseif !fromNewton && !haskey(state, :z0) && state.step > 0
                 mismatches[1] += ending[1] != state.step
@@ -130,7 +130,7 @@ opts_bratu = ContinuationPar(
         fill!(shown, 0)
         stop_at_first(state; fromNewton = true, kwargs...) = (record(state; fromNewton, kwargs...); fromNewton || !haskey(state, :itlinear) || state.step < 1)
         continuation(prob_bratu, PALC(; corrector = NonlinearSolveCorrector(exact)), opts_bratu; callback_newton = stop_at_first)
-        @test findlast(>(0), shown) == 2
+        @test findlast(>(0), shown) == 1
     end
 
     @testset "the quality tests of CorrectorQuality reject a step in the middle of the corrector" begin
