@@ -37,7 +37,17 @@ function J_bratu(x, p)
     )
 end
 
-J_bratu_free(x, p) = dx -> J_bratu(x, p) * dx
+"`J_bratu` written into `buffer`, which every call returns"
+struct RewrittenJacobian
+    buffer::Matrix{Float64}
+end
+
+function (jacobian::RewrittenJacobian)(x, p)
+    jacobian.buffer .= J_bratu(x, p)
+    return jacobian.buffer
+end
+
+J_bratu_free(x, p) =dx -> J_bratu(x, p) * dx
 
 # `precs` of `KrylovJL_GMRES`: the LU of the dense Jacobian (bordered by PALC), counting its builds
 struct DenseLUPreconditioner
@@ -132,6 +142,14 @@ opts_bratu = ContinuationPar(
         @test length(br.sol) == length(br_reference.sol)
         @test maximum(abs, br.branch.param .- br_reference.branch.param) < 1.0e-8
         @test any(diff(br.branch.param) .< 0)
+    end
+
+    @testset "a Jacobian rewritten in place is refactored at every Newton step" begin
+        # the same matrix object at every call, as a reusing `J` returns it
+        prob = BifurcationProblem(F_bratu, zeros(20), (λ = 0.01,), (@optic _.λ); J = RewrittenJacobian(zeros(20, 20)))
+        br = continuation(prob, PALC(; corrector = NonlinearSolveCorrector(exact)), opts_bratu)
+        @test length(br.sol) == length(br_reference.sol)
+        @test maximum(abs, br.branch.param .- br_reference.branch.param) < 1.0e-8
     end
 
     @testset "a Jacobian carried across steps stays on the branch" begin
