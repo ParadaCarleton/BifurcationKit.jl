@@ -133,6 +133,10 @@ opts_bratu = ContinuationPar(
         @test findlast(>(0), shown) == 2
     end
 
+    @testset "a termination condition is refused" begin
+        @test_throws ArgumentError NonlinearSolveCorrector(exact; termination_condition = NonlinearSolve.NonlinearSolveBase.AbsNormTerminationMode(norm))
+    end
+
     @testset "other algorithms stay on the branch" begin
         # a modified Newton method (Jacobian reuse) or a trust region takes other steps: the points still solve F = 0 on the same branch
         for alg in (

@@ -10,7 +10,7 @@ Nonlinear solver of [NonlinearSolve.jl](https://docs.sciml.ai/NonlinearSolve/sta
 - `alg` is any `NonlinearSolve` algorithm that accepts a user Jacobian, for example `NewtonRaphson(; linsolve = LUFactorization())` or `TrustRegion()`. For PALC with a Jacobian which is a matrix, its step must be a Newton step (the `NewtonDescent` or `Dogleg` descent of a first-order algorithm, such as `NewtonRaphson` and `TrustRegion`), whose linear solver becomes `bls`. The Jacobian reuse (`jacobian_reuse = JacobianReuse(...)`) and the linear solver (`linsolve`, with its preconditioners) are options of `alg`.
 - `bls` is the algorithm of [BorderedLinearSolve.jl](https://github.com/SciML/BorderedLinearSolve.jl) for the bordered linear systems of PALC when the Jacobian is a matrix. The default `nothing` is `BorderedLinearSolve.BorderingBLS(; inner = linsolve, k = 1)`, block elimination with one correction sweep, which solves with `J` by the `linsolve` of `alg`.
 - `reuse_jacobian = true` carries the Jacobian, its age and its factorization from one corrector to the next (`reinit!(cache, u0; p, reuse_jacobian = true)`), so the reuse policy of `alg` decides when to rebuild it across continuation steps as well as within one. It needs a NonlinearSolve.jl whose `reinit!` accepts `reuse_jacobian`. With the default `false`, every corrector starts from a fresh Jacobian.
-- `solve_kwargs` are passed to `NonlinearSolve.init`. The tolerance `tol` and the number of iterations `max_iterations` come from `NewtonPar`.
+- `solve_kwargs` are passed to `NonlinearSolve.init`. The tolerance `tol` and the number of iterations `max_iterations` come from `NewtonPar`. `termination_condition` is refused: the corrector stops when the `callback` of `continuation` (`callback_newton`) does not continue, or the residual is within `tol`.
 
 # Usage
 
@@ -38,7 +38,7 @@ A dense linear solver (for example `LUFactorization()`) needs `jacobian(prob, x,
 !!! warning "Differences with the default corrector"
     - the state `x` must be an `AbstractArray`.
     - the linear solver, line search and verbosity come from the options of `alg`; `NewtonPar` gives `tol` and `max_iterations`. The bordered linear solver is the keyword `bls` of `NonlinearSolveCorrector`, in place of the `bls` of `PALC`.
-    - the `callback` of `continuation` (`callback_newton`) is called before the first iteration and at the end.
+    - the `callback` of `continuation` (`callback_newton`) is called before the first iteration, after each Newton step and at the end, as in the default corrector.
     - `p` is kept in `[p_min, p_max]` by the box constraints of `alg` when it allows bounds (`SciMLBase.allowsbounds(alg)`, for example the bounded trust region). Otherwise `p` moves freely during the iterations, and PALC corrects a corrector that converges outside `[p_min, p_max]` again at the bound, from where it ended.
 
 # Internal fields
@@ -62,6 +62,9 @@ end
 function NonlinearSolveCorrector(alg::Any; bls = nothing, reuse_jacobian::Bool = false, solve_kwargs...)
     if isnothing(Base.get_extension(@__MODULE__, :NonlinearSolveExt))
         error("`NonlinearSolveCorrector` requires the packages NonlinearSolve.jl and BorderedLinearSolve.jl. Please run `using NonlinearSolve; import BorderedLinearSolve` first (`import`, because both BifurcationKit and BorderedLinearSolve export `BorderingBLS`).")
+    end
+    if haskey(solve_kwargs, :termination_condition)
+        throw(ArgumentError("`NonlinearSolveCorrector` stops on the `callback_newton` of `continuation` and the tolerance `tol` of `NewtonPar`; it takes no `termination_condition`."))
     end
     return NonlinearSolveCorrector(alg, _palc_algorithm(alg, bls), NamedTuple(solve_kwargs), reuse_jacobian, Ref{Any}(nothing), Ref{Any}(nothing))
 end
