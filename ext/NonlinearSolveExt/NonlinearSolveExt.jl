@@ -290,7 +290,8 @@ module NonlinearSolveExt
         x, p = BK._copy(palc_state(w)), palc_parameter(w)
         res = it.norm(residual)
         push!(it.residuals, res)
-        verdict = it.callback((; x, res_f = palc_state(residual), residual = res, step, it.contparams, it.z0, it.z_pred, it.ds, p, it.residuals, it.options); fromNewton = false, it.kwargs...)
+        # `itlinear` marks a Newton step for `PALCStepCheck`, which runs the quality tests of `CorrectorQuality` on it; NonlinearSolve does not report the iterations of its linear solver
+        verdict = it.callback((; x, res_f = palc_state(residual), residual = res, step, itlinear = 0, it.contparams, it.z0, it.z_pred, it.ds, p, it.residuals, it.options); fromNewton = false, it.kwargs...)
         return ends_newton(verdict, res, tol)
     end
 
