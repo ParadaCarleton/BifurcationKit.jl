@@ -116,6 +116,17 @@ opts_bratu = ContinuationPar(
         end
     end
 
+    @testset "DirectBLS, whose cache holds the problem alone, follows the same branch" begin
+        br = continuation(
+            prob_bratu,
+            PALC(; corrector = NonlinearSolveCorrector(exact; bls = BorderedLinearSolve.DirectBLS(; inner = LUFactorization()))),
+            opts_bratu,
+        )
+        @test length(br.sol) == length(br_reference.sol)
+        @test maximum(abs, br.branch.param .- br_reference.branch.param) < 1.0e-8
+        @test any(diff(br.branch.param) .< 0)
+    end
+
     @testset "a Jacobian carried across steps stays on the branch" begin
         # `reuse_jacobian = true`: the policy of `alg` decides when the Jacobian is rebuilt
         alg = NewtonRaphson(;

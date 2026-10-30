@@ -137,16 +137,23 @@ module NonlinearSolveExt
         return SciMLBase.init(bordered_problem(A, b), alg.solve_func.bls)
     end
 
+    """
+    The cache of `bls` for `problem`. A `BorderingBLS` cache keeps the factorization of `J` (a new Jacobian is a new object, a reused one is the one of the cache); the cache of any other algorithm (`DirectBLS`) holds the problem alone and is built again.
+    """
+    function refreshed_cache(cache::BorderedLinearSolve.BorderedCache, problem, bls)
+        if problem.J !== cache.prob.J
+            cache.inner = SciMLBase.init(problem, bls).inner
+        end
+        cache.prob = problem
+        return cache
+    end
+    refreshed_cache(::Any, problem, bls) = SciMLBase.init(problem, bls)
+
     function (bs::BorderedSolve)(A::BorderedJacobian, b::ArrayPartition, u, p, isfresh, Pl, Pr, cache; kwargs...)
         # the arclength row of the current corrector (`p.p`, its `PALCCache`): a Jacobian reused across correctors carries over `J` and `∂ₚF` only
         ctx = p.p
         problem = BorderedLinearProblem(A.J, A.dFdp, ctx.row, ctx.c, palc_state(b), palc_parameter(b))
-        # a new Jacobian `J` is a new object, a reused one is the one of the cache
-        if A.J !== cache.prob.J
-            cache.inner = SciMLBase.init(problem, bs.bls).inner
-        end
-        cache.prob = problem
-        sol = SciMLBase.solve!(cache)
+        sol = SciMLBase.solve!(refreshed_cache(cache, problem, bs.bls))
         palc_state(u) .= sol.v
         u.x[2] .= sol.σ
         return u
