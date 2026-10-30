@@ -100,6 +100,32 @@ opts_bratu = ContinuationPar(
         @test any(diff(br.branch.param) .< 0)
     end
 
+    @testset "the callback sees every Newton step and its verdict stops the corrector" begin
+        # `shown` counts, by number of Newton steps taken, the correctors which showed the callback an iterate; `ending` holds the step of the last one; `mismatches` counts the closing calls which report another count
+        shown, ending, mismatches = zeros(Int, 50), zeros(Int, 1), zeros(Int, 1)
+        function record(state; fromNewton = true, kwargs...)
+            if !fromNewton && haskey(state, :z0)
+                shown[begin + state.step] += 1
+                ending[1] = state.step
+            elseif !fromNewton && state.step > 0
+                mismatches[1] += ending[1] != state.step
+            end
+            return true
+        end
+        continuation(prob_bratu, PALC(; corrector = NonlinearSolveCorrector(exact)), opts_bratu; callback_newton = record)
+        @test first(shown) > 0
+        # a corrector which showed an iterate after some steps showed the one before
+        @test all(Iterators.map(<=, Iterators.drop(shown, 1), shown))
+        @test findlast(>(0), shown) >= 3
+        @test iszero(mismatches[1])
+
+        # a callback which stops at the first Newton step: no corrector goes on to a second
+        fill!(shown, 0)
+        stop_at_first(state; fromNewton = true, kwargs...) = (record(state; fromNewton, kwargs...); fromNewton || !haskey(state, :z0) || state.step < 1)
+        continuation(prob_bratu, PALC(; corrector = NonlinearSolveCorrector(exact)), opts_bratu; callback_newton = stop_at_first)
+        @test findlast(>(0), shown) == 2
+    end
+
     @testset "other algorithms stay on the branch" begin
         # a modified Newton method (Jacobian reuse) or a trust region takes other steps: the points still solve F = 0 on the same branch
         for alg in (
