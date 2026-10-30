@@ -55,22 +55,46 @@ let
 BK.SpecialPoint(param=0., interval=(0.,0.), x=zeros(2), norm=0., τ=BorderedArray(rand(20),2.), precision=0.1) |> BK.type
 end
 ####################################################################################################
+# the dot scaling and the step size control stay in the state's float type (Int quotients are Float64)
+let
+    for T in (Float64, Float32, Float16)
+        @test BK._inverse_length(ones(T, 5)) === inv(T(5))
+        @test BK._step_growth(T(0.1), T(0.5), 5, 2) isa T
+        @test BK.__scaling_function_dot_palc(ones(T, 4)) == fill(T(0.25), 4)
+    end
+    # Float64 results are those of `ds * (1 + a * ((Nmax - itnewton) / Nmax)^2)`
+    @test BK._step_growth(0.1, 0.5, 5, 2) == 0.1 * (1 + 0.5 * ((5 - 2) / 5)^2)
+end
+####################################################################################################
 # fold points recorded in the problem's float type
-# commented for F32 error until https://github.com/bifurcationkit/BifurcationKit.jl/pull/355
 let
     for T in (Float64, Float32)
         prob = BK.BifurcationProblem((u, p) -> (@. u^3 - u - (p.λ - 1)), T[-1.3247179], (λ = zero(T),), (@optic _.λ))
-        opts = ContinuationPar(ds = T(0.05), dsmax = T(0.1), p_min = zero(T), p_max = T(2), max_steps = 400, detect_fold = true, detect_bifurcation = 0, detect_event = 2)
-        # br = continuation(prob, PALC(), opts)
-        # folds = filter(sp -> sp.type == :fold, br.specialpoint)
-        # @test length(folds) == 2
-        # @test all(sp -> sp.param isa T && sp.precision isa T, folds)
-        # # a Newton-refined saved point keeps the branch's float type
-        # br = continuation(prob, PALC(), ContinuationPar(opts; detect_fold = false); event = BK.SaveAtEvent((0.25,), use_newton = true))
-        # saved = filter(sp -> sp.type == :save, br.specialpoint)
-        # @test length(saved) == 1
-        # @test only(saved).param isa T && only(saved).param ≈ T(0.25)
+        opts = ContinuationPar(ds = T(0.05), dsmax = T(0.1), p_min = zero(T), p_max = T(2), max_steps = 400, detect_fold = true, detect_bifurcation = 0, newton_options = NewtonPar(tol = 100eps(T)))
+        br = continuation(prob, PALC(), opts)
+        folds = filter(sp -> sp.type == :fold, br.specialpoint)
+        @test length(folds) == 2
+        @test all(sp -> sp.param isa T && sp.precision isa T, folds)
+        # a Newton-refined saved point keeps the branch's float type
+        br = continuation(prob, PALC(), ContinuationPar(opts; detect_fold = false, detect_event = 2); event = BK.SaveAtEvent((0.25,), use_newton = true))
+        saved = filter(sp -> sp.type == :save, br.specialpoint)
+        @test length(saved) == 1
+        @test only(saved).param isa T && only(saved).param ≈ T(0.25)
     end
+end
+####################################################################################################
+# the endpoint is converged only when the branch reaches p_max; a stop inside the domain is a guess
+let
+    endpoint(br) = only(filter(sp -> sp.type == :endpoint, br.specialpoint))
+    opts = ContinuationPar(ds = 0.05, dsmin = 1e-3, dsmax = 0.1, p_min = 0., p_max = 2., max_steps = 400, detect_bifurcation = 0)
+    smooth = BK.BifurcationProblem((u, p) -> u .- p.λ, [0.], (λ = 0.,), (@optic _.λ))
+    @test endpoint(continuation(smooth, PALC(), opts)).status == :converged
+    @test endpoint(continuation(smooth, PALC(), ContinuationPar(opts; max_steps = 3))).status == :guess
+    # F jumps at λ = 1, so every step past it fails until ds reaches dsmin
+    jump = BK.BifurcationProblem((u, p) -> u .- p.λ .+ 10 * (p.λ >= 1), [0.], (λ = 0.,), (@optic _.λ))
+    br = continuation(jump, PALC(), opts)
+    @test br.param[end] < 1
+    @test endpoint(br).status == :guess
 end
 ####################################################################################################
 # test continuation algorithm
@@ -217,6 +241,23 @@ let
     # test with callbacks
     br0 = continuation(prob, PALC(), (@set opts.max_steps = 3), callback_newton = (state; kwargs...)->(true));
     BK.get_solution(br0, 1)
+
+    # every call from the PALC corrector carries the step's predictor and length; a call without them stops the branch
+    carries_predictor(state; fromNewton = true, kwargs...) = fromNewton || (state.ds isa Real && state.z_pred isa BorderedArray && (state.step > 0 || (state.x == state.z_pred.u && state.p == state.z_pred.p)))
+    @test length(continuation(prob, PALC(), (@set opts.max_steps = 3), callback_newton = carries_predictor)) == length(br0)
+
+    # the step length is within its bounds, the predictor moves off the previous point, and each phase of the corrector is reached
+    corrector_calls = NamedTuple[]
+    record(state; fromNewton = true, kwargs...) = (fromNewton || push!(corrector_calls, (; state.step, state.ds, state.z_pred, z0 = get(state, :z0, nothing), has_jacobian = haskey(state, :J))); true)
+    continuation(prob, PALC(), (@set opts.max_steps = 3), callback_newton = record)
+    @test any(call -> call.step == 0, corrector_calls)
+    @test any(call -> call.step > 0 && call.has_jacobian, corrector_calls)
+    @test any(call -> call.step > 0 && ~call.has_jacobian, corrector_calls)
+    for call in corrector_calls
+        @test abs(call.ds) <= opts.dsmax
+        @test abs(call.ds) >= opts.dsmin
+        isnothing(call.z0) || @test call.z_pred.p != call.z0.p
+    end
 
     ###### Used to check type stability of the methods
     @test isconcretetype(return_type(ContIterable, typeof((prob, PALC(), opts))))
