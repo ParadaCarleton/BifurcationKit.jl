@@ -37,7 +37,17 @@ function J_bratu(x, p)
     )
 end
 
-J_bratu_free(x, p) = dx -> J_bratu(x, p) * dx
+"`J_bratu` written into `buffer`, which every call returns"
+struct RewrittenJacobian
+    buffer::Matrix{Float64}
+end
+
+function (jacobian::RewrittenJacobian)(x, p)
+    jacobian.buffer .= J_bratu(x, p)
+    return jacobian.buffer
+end
+
+J_bratu_free(x, p) =dx -> J_bratu(x, p) * dx
 
 # `precs` of `KrylovJL_GMRES`: the LU of the dense Jacobian (bordered by PALC), counting its builds
 struct DenseLUPreconditioner
@@ -97,6 +107,36 @@ opts_bratu = ContinuationPar(
         @test length(br.sol) == length(br_reference.sol)
     end
 
+    @testset "the callback sees every Newton step and its verdict stops the corrector" begin
+        # `shown` counts, by number of Newton steps taken, the correctors which showed the callback an iterate; `ending` holds the step of the last one; `mismatches` counts the closing calls which report another count
+        shown, ending, mismatches = zeros(Int, 50), zeros(Int, 1), zeros(Int, 1)
+        function record(state; fromNewton = true, kwargs...)
+            if !fromNewton && haskey(state, :z0)
+                shown[begin + state.step] += 1
+                ending[1] = state.step
+            elseif !fromNewton && state.step > 0
+                mismatches[1] += ending[1] != state.step
+            end
+            return true
+        end
+        continuation(prob_bratu, PALC(; corrector = NonlinearSolveCorrector(exact)), opts_bratu; callback_newton = record)
+        @test first(shown) > 0
+        # a corrector which showed an iterate after some steps showed the one before
+        @test all(Iterators.map(<=, Iterators.drop(shown, 1), shown))
+        @test findlast(>(0), shown) >= 3
+        @test iszero(mismatches[1])
+
+        # a callback which stops at the first Newton step: no corrector goes on to a second
+        fill!(shown, 0)
+        stop_at_first(state; fromNewton = true, kwargs...) = (record(state; fromNewton, kwargs...); fromNewton || !haskey(state, :z0) || state.step < 1)
+        continuation(prob_bratu, PALC(; corrector = NonlinearSolveCorrector(exact)), opts_bratu; callback_newton = stop_at_first)
+        @test findlast(>(0), shown) == 2
+    end
+
+    @testset "a termination condition is refused" begin
+        @test_throws ArgumentError NonlinearSolveCorrector(exact; termination_condition = NonlinearSolve.NonlinearSolveBase.AbsNormTerminationMode(norm))
+    end
+
     @testset "other algorithms stay on the branch" begin
         # a modified Newton method (Jacobian reuse) or a trust region takes other steps: the points still solve F = 0 on the same branch
         for alg in (
@@ -121,6 +161,25 @@ opts_bratu = ContinuationPar(
             @test maximum(point -> point.p, br.sol) ≈
                 maximum(point -> point.p, br_reference.sol) atol = 0.02
         end
+    end
+
+    @testset "DirectBLS, whose cache holds the problem alone, follows the same branch" begin
+        br = continuation(
+            prob_bratu,
+            PALC(; corrector = NonlinearSolveCorrector(exact; bls = BorderedLinearSolve.DirectBLS(; inner = LUFactorization()))),
+            opts_bratu,
+        )
+        @test length(br.sol) == length(br_reference.sol)
+        @test maximum(abs, br.branch.param .- br_reference.branch.param) < 1.0e-8
+        @test any(diff(br.branch.param) .< 0)
+    end
+
+    @testset "a Jacobian rewritten in place is refactored at every Newton step" begin
+        # the same matrix object at every call, as a reusing `J` returns it
+        prob = BifurcationProblem(F_bratu, zeros(20), (λ = 0.01,), (@optic _.λ); J = RewrittenJacobian(zeros(20, 20)))
+        br = continuation(prob, PALC(; corrector = NonlinearSolveCorrector(exact)), opts_bratu)
+        @test length(br.sol) == length(br_reference.sol)
+        @test maximum(abs, br.branch.param .- br_reference.branch.param) < 1.0e-8
     end
 
     @testset "a Jacobian carried across steps stays on the branch" begin

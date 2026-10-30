@@ -136,16 +136,23 @@ module NonlinearSolveExt
         return SciMLBase.init(bordered_problem(A, b), alg.solve_func.bls)
     end
 
+    """
+    The cache of `bls` for `problem`. A `BorderingBLS` cache keeps the factorization of `J` while NonlinearSolve reuses the Jacobian (`isfresh = false`) and refactors when NonlinearSolve evaluated a new one (`isfresh`) or `J` is another object, so a `J` rewritten in place is not read through a stale factorization; the cache of any other algorithm (`DirectBLS`) holds the problem alone and is built again.
+    """
+    function refreshed_cache(cache::BorderedLinearSolve.BorderedCache, problem, bls, isfresh)
+        if isfresh || problem.J !== cache.prob.J
+            cache.inner = SciMLBase.init(problem, bls).inner
+        end
+        cache.prob = problem
+        return cache
+    end
+    refreshed_cache(::Any, problem, bls, isfresh) = SciMLBase.init(problem, bls)
+
     function (bs::BorderedSolve)(A::BorderedJacobian, b::ArrayPartition, u, p, isfresh, Pl, Pr, cache; kwargs...)
         # the arclength row of the current corrector (`p.p`, its `PALCCache`): a Jacobian reused across correctors carries over `J` and `∂ₚF` only
         ctx = p.p
         problem = BorderedLinearProblem(A.J, A.dFdp, ctx.row, ctx.c, palc_state(b), palc_parameter(b))
-        # a new Jacobian `J` is a new object, a reused one is the one of the cache
-        if A.J !== cache.prob.J
-            cache.inner = SciMLBase.init(problem, bs.bls).inner
-        end
-        cache.prob = problem
-        sol = SciMLBase.solve!(cache)
+        sol = SciMLBase.solve!(refreshed_cache(cache, problem, bs.bls, isfresh))
         palc_state(u) .= sol.v
         u.x[2] .= sol.σ
         return u
@@ -247,6 +254,64 @@ module NonlinearSolveExt
     end
 
     #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    """
+    The termination condition of the NonlinearSolve cache of a corrector: after each Newton step it shows the iterate to `call` (the `callback` of the continuation, as `newton` and `newton_palc` do at every step), and stops when `call` returns `true`. `call` is `nothing` between solves, when the condition never stops. `steps` counts the iterates shown since `call` was set.
+    """
+    mutable struct IterateStop <: NonlinearSolveBase.AbstractNonlinearTerminationMode
+        call::Any
+        steps::Int
+    end
+
+    function NonlinearSolveBase.check_convergence(stop::IterateStop, residual, state, ::Any, abstol, ::Any)::Bool
+        if isnothing(stop.call)
+            return false
+        end
+        stop.steps += 1
+        return stop.call(state, residual, stop.steps, abstol)
+    end
+
+    "Whether the callback verdict `verdict` or a residual `res` within `tol` ends Newton's method, as in `newton_palc`."
+    ends_newton(verdict, res, tol) = !BK._continues(verdict) || res <= tol
+
+    "The call of an `IterateStop` for the bordered problem of PALC: the callback of `newton_palc` at an iterate."
+    struct PALCIterate{Tcallback, Tkw, Tnorm, Tz0, Tzp, Tds, Tcp, Topt, Tres}
+        callback::Tcallback
+        kwargs::Tkw
+        norm::Tnorm
+        z0::Tz0
+        z_pred::Tzp
+        ds::Tds
+        contparams::Tcp
+        options::Topt
+        residuals::Tres
+    end
+
+    function (it::PALCIterate)(w::ArrayPartition, residual::ArrayPartition, step::Int, tol)::Bool
+        x, p = BK._copy(palc_state(w)), palc_parameter(w)
+        res = it.norm(residual)
+        push!(it.residuals, res)
+        verdict = it.callback((; x, res_f = palc_state(residual), residual = res, step, it.contparams, it.z0, it.z_pred, it.ds, p, it.residuals, it.options); fromNewton = false, it.kwargs...)
+        return ends_newton(verdict, res, tol)
+    end
+
+    "The call of an `IterateStop` for a Newton solve at a fixed parameter: the callback of `newton` at an iterate."
+    struct FixedIterate{Tcallback, Tkw, Tnorm, Tx0, Topt, Tres}
+        callback::Tcallback
+        kwargs::Tkw
+        norm::Tnorm
+        x0::Tx0
+        options::Topt
+        residuals::Tres
+    end
+
+    function (it::FixedIterate)(x, fx, step::Int, tol)::Bool
+        res = it.norm(fx)
+        push!(it.residuals, res)
+        verdict = it.callback((; x = BK._copy(x), fx, J = nothing, residual = res, step, it.options, it.x0, it.residuals); fromNewton = true, it.kwargs...)
+        return ends_newton(verdict, res, tol)
+    end
+
+    #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # One NonlinearSolve cache is kept by the corrector between solves, rebuilt when the tolerance, the number of iterations or the size of the system change.
     struct CacheKey{T, Tb}
         tol::T
@@ -267,7 +332,7 @@ module NonlinearSolveExt
     end
 
     # `matrix`: the Jacobian is the operator `jacobian(u0, ctx)`, given as `jac_prototype`; otherwise NonlinearSolve takes `jacobian` for a dense linear solver and builds its own operator from `jvp` for an iterative one
-    function solve_cache!(slot::Base.RefValue{Any}, corrector::NonlinearSolveCorrector, alg, residual, jacobian, jvp, u0, ctx, options::NewtonPar, norm, bounds, matrix::Bool)
+    function solve_cache!(slot::Base.RefValue{Any}, corrector::NonlinearSolveCorrector, alg, residual, jacobian, jvp, u0, ctx, options::NewtonPar, call, bounds, matrix::Bool)
         key = CacheKey(options.tol, options.max_iterations, length(u0), bounds)
         if !isnothing(slot[]) && slot[].key == key
             cache = slot[].cache
@@ -284,15 +349,21 @@ module NonlinearSolveExt
                 f = SciMLBase.NonlinearFunction{false}(residual; jac = jacobian, jvp)
             end
             problem = SciMLBase.NonlinearProblem(f, u0, ctx; something(bounds, (;))...)
+            stop = IterateStop(nothing, 0)
             cache = SciMLBase.init(problem, alg;
                 abstol = options.tol,
                 reltol = zero(options.tol),
                 maxiters = options.max_iterations,
-                termination_condition = NonlinearSolveBase.AbsNormTerminationMode(norm),
+                termination_condition = stop,
                 corrector.solve_kwargs...)
-            slot[] = (; key, cache, matrix)
+            slot[] = (; key, cache, matrix, stop)
         end
-        return SciMLBase.solve!(cache)
+        # armed after `reinit!`, which may check the initial iterate
+        stop = slot[].stop
+        stop.call, stop.steps = call, 0
+        solution = SciMLBase.solve!(cache)
+        stop.call = nothing
+        return solution
     end
 
     # whether the Jacobian of the problem is a matrix, which PALC borders with BorderedLinearSolve; read once, at the first corrector
@@ -320,9 +391,10 @@ module NonlinearSolveExt
             flag = BK._converged(res < tol, callback((; x = x0, fx, residual = res, step = 0, options, x0, residuals = [res]); fromNewton = true, kwargs...))
             return NonLinearSolution(x0, prob, [res], flag, 0, 0)
         end
-        sol = solve_cache!(corrector.fixed_cache, corrector, corrector.alg, fixed_residual, fixed_jacobian, fixed_jvp, x0, ctx, options, normN, nothing, false)
+        residuals = [res]
+        call = FixedIterate(callback, NamedTuple(kwargs), normN, x0, options, residuals)
+        sol = solve_cache!(corrector.fixed_cache, corrector, corrector.alg, fixed_residual, fixed_jacobian, fixed_jvp, x0, ctx, options, call, nothing, false)
         resend = normN(sol.resid)
-        residuals = [res, resend]
         step = sol.stats.nsteps
         flag = BK._converged(SciMLBase.successful_retcode(sol) & (resend < tol),
                callback((; x = sol.u, fx = sol.resid, residual = resend, step, options, x0, residuals); fromNewton = true, kwargs...))
@@ -365,10 +437,10 @@ module NonlinearSolveExt
         else
             alg, jvp = corrector.alg, palc_jvp
         end
-        sol = solve_cache!(corrector.palc_cache, corrector, alg, palc_residual, palc_jacobian, jvp, w0, ctx, contparams.newton_options, bnorm, palc_bounds(alg, w0, p_min, p_max), matrix)
+        call = PALCIterate(callback, NamedTuple(kwargs), bnorm, z0, z_pred, state.ds, contparams, options, residuals)
+        sol = solve_cache!(corrector.palc_cache, corrector, alg, palc_residual, palc_jacobian, jvp, w0, ctx, contparams.newton_options, call, palc_bounds(alg, w0, p_min, p_max), matrix)
         x, p = BK._copy(palc_state(sol.u)), palc_parameter(sol.u)
         resend = bnorm(sol.resid)
-        residuals = [res, resend]
         step = sol.stats.nsteps
         flag = BK._converged(SciMLBase.successful_retcode(sol) & (resend < tol),
                callback((; x, res_f = palc_state(sol.resid), residual = resend, step, contparams, z_pred, ds = state.ds, p, residuals, options); fromNewton = false, kwargs...))
