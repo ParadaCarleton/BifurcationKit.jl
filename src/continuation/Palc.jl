@@ -86,7 +86,7 @@ Additional information is available on the [website](https://bifurcationkit.gith
 $(TYPEDFIELDS)
 
 """
-@with_kw struct PALC{Ttang <: AbstractTangentComputation, Tbls <: AbstractLinearSolver, T, Tdot, Tctl} <: AbstractContinuationAlgorithm
+@with_kw struct PALC{Ttang <: AbstractTangentComputation, Tbls <: AbstractLinearSolver, T, Tdot, Tctl, Todot} <: AbstractContinuationAlgorithm
     "Tangent (predictor), must be a subtype of `AbstractTangentComputation`. For example `Secant()` or `Bordered()`, etc."
     tangent::Ttang = Secant()
     "`θ` is a parameter in the arclength constraint. It is very **important** to tune it. It should be tuned for the continuation to work properly especially in the case of large problems where the < x - x_0, dx_0 > component in the constraint equation might be favoured too much. Also, large thetas favour p as the corresponding term in N involves the term 1-theta."
@@ -97,6 +97,8 @@ $(TYPEDFIELDS)
     bls::Tbls = MatrixBLS()
     "`dotθ = DotTheta()`, this sets up a dot product `(x, y) -> dot(x, y) / length(x)` used to define the weighted dot product (resp. norm) ``\\|(x, p)\\|^2_\\theta`` in the constraint ``N(x, p)`` (see online docs on [PALC](https://bifurcationkit.github.io/BifurcationKitDocs.jl/dev/PALC/)). This argument can be used to remove the factor `1/length(x)` for example in problems where the dimension of the state space changes (mesh adaptation, ...) or when a specific (FEM) dot product is provided."
     dotθ::Tdot = DotTheta()
+    "The product `(u1, u2, p1, p2, θ)`, as a `DotTheta` is called, whose sign orients a `Bordered` tangent along the previous one when the determinant does not (`orientation_check` and `max_turn` off). It defaults to `dotθ`. Pass another when `dotθ`'s weights shrink a coordinate that should decide the direction, as point weights near a saturated variable can past a fold."
+    orientation_dot::Todot = dotθ
     "Step control by the quality of the corrector, a [`CorrectorQuality`](@ref) or `nothing` (the default). With `nothing`, `ds` is controlled by the number of Newton iterations, see the parameter `a` of [`ContinuationPar`](@ref)."
     step_control::Tctl = nothing
     "Orientation test: reject a step whose new tangent has a negative dot product with the previous one (they point more than `π / 2` apart), as when the corrector converged onto a nearby part of the curve that runs the other way. A `Secant` tangent is the chord to the new point, so the test costs one dot product. A `Bordered` tangent is oriented as the curve is, by the sign of the determinant of the bordered matrix `[J dFdl; τ']` (Allgower and Georg, *Introduction to Numerical Continuation Methods*, definition (2.1.7)), with the sign fixed to the direction of travel at the start. That determinant needs a `MatrixBLS` solver and a dense LU factorisation of size `n + 1` per step, `O(n^3)`. Off by default."
@@ -108,6 +110,10 @@ $(TYPEDFIELDS)
 end
 get_bordered_linsolver(alg::PALC) = alg.bls
 getdot(alg::PALC) = alg.dotθ
+"The product that orients a `Bordered` tangent without the determinant: `orientation_dot` for `PALC`, the dot product otherwise."
+get_orientation_dot(alg::PALC) = alg.orientation_dot
+get_orientation_dot(alg) = getdot(alg)
+get_orientation_dot(it::ContIterable) = get_orientation_dot(it.alg)
 getθ(alg::PALC) = alg.θ
 # we also extend this for ContIterable
 getdot(it::ContIterable) = getdot(it.alg)
