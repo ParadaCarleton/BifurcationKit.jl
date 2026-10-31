@@ -22,7 +22,7 @@ let
 
     n = 101
     sol0 = [(i-1)*(n-i)/n^2+0.1 for i=1:n]
-    prob = BK.BifurcationProblem(F_chan, sol0, (α = 3.3, β = 0.01), (@optic _.α))
+    prob = BK.BifurcationProblem(F_chan, sol0, (α = 3.3, β = 0.01), (@optic _.α); R01 = BK.FiniteDifferences())
     opts_br0 = ContinuationPar(p_max = 4., max_steps = 100, newton_options = NewtonPar(tol = 1e-10))
     br = continuation(prob, PALC(), opts_br0)
 ####################################################################################################

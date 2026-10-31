@@ -29,7 +29,7 @@ let
             record_from_solution = (x, p; k...) -> x[1],
             J = (x, r) -> diagm(0 => 1 .- 3 .* x.^2),
             Jᵗ = (x, r) -> diagm(0 => 1 .- 3 .* x.^2),
-            d2F = (x, r, v1, v2) -> -6 .* x .* v1 .* v2,)
+            d2F = (x, r, v1, v2) -> -6 .* x .* v1 .* v2, R01 = BK.FiniteDifferences())
     sol0 = BK.solve(prob, Newton(), opt_newton0)
 
     opts_br0 = ContinuationPar(dsmin = 0.001, dsmax = 0.07, ds= -0.02, p_max = 4.1, p_min = -1., newton_options = NewtonPar(tol = 1e-8), detect_bifurcation = 0, max_steps = 150)
@@ -76,7 +76,7 @@ let
     sol0 = BorderedArray([0.8], 0.0)
 
     opt_newton = NewtonPar(tol = 1e-9, verbose = false, linsolver = linsolveBd())
-    prob = BK.BifurcationProblem(Fb, sol0, (1., 1.), (@optic _[1]); J = (x, r) -> Jacobian(x, r[1], r[2]), record_from_solution = (x,p;k...) -> x.u[1])
+    prob = BK.BifurcationProblem(Fb, sol0, (1., 1.), (@optic _[1]); J = (x, r) -> Jacobian(x, r[1], r[2]), record_from_solution = (x,p;k...) -> x.u[1], R01 = BK.FiniteDifferences())
     sol = BK.solve(prob, Newton(), opt_newton)
     @test BK.converged(sol)
 
@@ -92,7 +92,7 @@ let
     prob2 = BK.BifurcationProblem(Fb, sol0, (1., 1.), (@optic _[1]);
                 J  = (x, r) -> Jacobian(x, r[1], r[2]),
                 Jᵗ = (x, r) -> Jacobian(x, r[1], r[2]),
-                d2F = (x, r, v1, v2) -> BorderedArray(-6 .* x.u .* v1.u .* v2.u, 0.),)
+                d2F = (x, r, v1, v2) -> BorderedArray(-6 .* x.u .* v1.u .* v2.u, 0.), R01 = BK.FiniteDifferences())
 
     br = continuation(prob2, PALC(), opts_br; linear_algo = BorderingBLS(opt_newton.linsolver))
 
@@ -153,7 +153,7 @@ end
 let
     sol0 = BorderedArray(BK.VI.MinimalMVec([0.8]), 0.0)
     opt_newton = NewtonPar(tol = 1e-9, verbose = false, linsolver = linsolveBd2())
-    prob = BK.BifurcationProblem(Fb2, sol0, (1., 1.), (@optic _[1]); J = (x, r) -> Jacobian2(x, r[1], r[2]), record_from_solution = (x,p;k...) -> x.u.vec[1])
+    prob = BK.BifurcationProblem(Fb2, sol0, (1., 1.), (@optic _[1]); J = (x, r) -> Jacobian2(x, r[1], r[2]), record_from_solution = (x,p;k...) -> x.u.vec[1], R01 = BK.FiniteDifferences())
     sol = BK.solve(prob, Newton(), opt_newton)
     @test BK.converged(sol)
 
@@ -169,7 +169,7 @@ let
     prob2 = BK.BifurcationProblem(Fb2, sol0, (1., 1.), (@optic _[1]);
                 J  = (x, r) -> Jacobian2(x, r[1], r[2]),
                 Jᵗ = (x, r) -> Jacobian2(x, r[1], r[2]),
-                d2F = (x, r, v1, v2) -> BorderedArray(BK.VI.MinimalMVec(-6 .* x.u.vec .* v1.u.vec .* v2.u.vec), 0.),)
+                d2F = (x, r, v1, v2) -> BorderedArray(BK.VI.MinimalMVec(-6 .* x.u.vec .* v1.u.vec .* v2.u.vec), 0.), R01 = BK.FiniteDifferences())
 
     br = continuation(prob2, PALC(), opts_br; linear_algo = BorderingBLS(opt_newton.linsolver))
 

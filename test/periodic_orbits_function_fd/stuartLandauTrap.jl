@@ -23,13 +23,13 @@ let
 par_sl = (r = 0.5, μ = 0., ν = 1.0, c3 = 1.0)
 u0 = [.001, .001]
 par_hopf = (@set par_sl.r = 0.1)
-prob = BK.BifurcationProblem(Fsl, u0, par_hopf, (@optic _.r))
+prob = BK.BifurcationProblem(Fsl, u0, par_hopf, (@optic _.r); R01 = BK.FiniteDifferences())
 ####################################################################################################
 # continuation, Hopf bifurcation point detection
 optconteq = ContinuationPar(ds = -0.01, detect_bifurcation = 3, p_min = -0.5, n_inversion = 8)
 br = continuation(prob, PALC(), optconteq)
 ####################################################################################################
-prob2 = BK.BifurcationProblem(Fsl, u0, par_hopf, (@optic _.r); J = (x, p) -> sparse(ForwardDiff.jacobian(z -> Fsl(z, p), x)))# we put sparse to try the different linear solvers
+prob2 = BK.BifurcationProblem(Fsl, u0, par_hopf, (@optic _.r); J = (x, p) -> sparse(ForwardDiff.jacobian(z -> Fsl(z, p), x)), R01 = BK.FiniteDifferences())# we put sparse to try the different linear solvers
 _trap = Trapeze(
                         prob2,
                         [1., 0],
