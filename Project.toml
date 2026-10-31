@@ -71,6 +71,7 @@ StructArrays = "0.4, ^0.6, 0.7"
 julia = "1.10"
 
 [extras]
+Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 AbstractDifferentiation = "c29ec348-61ec-40c8-8164-b8c60e9d9f3d"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 ComponentArrays = "b0b7db55-cfe3-40fc-9ded-d10e2dbeff66"
@@ -87,4 +88,4 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [targets]
-test = ["Test", "ForwardDiff", "OrdinaryDiffEq", "OrdinaryDiffEqRosenbrock", "OrdinaryDiffEqSDIRK", "OrdinaryDiffEqVerner", "Random", "AbstractDifferentiation", "Zygote", "SciMLSensitivity", "ComponentArrays", "Plots", "CairoMakie", "FFTW"]
+test = ["Test", "Pkg", "ForwardDiff", "OrdinaryDiffEq", "OrdinaryDiffEqRosenbrock", "OrdinaryDiffEqSDIRK", "OrdinaryDiffEqVerner", "Random", "AbstractDifferentiation", "Zygote", "SciMLSensitivity", "ComponentArrays", "Plots", "CairoMakie", "FFTW"]
