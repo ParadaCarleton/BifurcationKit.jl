@@ -87,7 +87,7 @@ $(TYPEDFIELDS)
 - `R21(pb::BifFunction, x, p, dx1, dx2, dp1)` calls `pb.jet.R21(x, p, dx1, dx2, dp1)`. Same for the other jet functions.
 - etc
 """
-struct BifFunction{Tf, TFinp, Tdf, Tdfad, Tj, Tjad, TJinp, Td2f, Td2fc, Td3f, Td3fc, Tδ, Tjet} <: AbstractBifurcationFunction
+struct BifFunction{Tf, TFinp, Tdf, Tdfad, Tj, Tjad, TJinp, Td2f, Td2fc, Td3f, Td3fc, Tδ, Tjet, Tfj} <: AbstractBifurcationFunction
     "Vector field. Function of type out-of-place `result = f(x, p)` or inplace `f(result, x, p)`. For type stability, the types of `x` and `result` should match"
     F::Tf
     "Same as F but inplace with signature F!(result, x, p)"
@@ -121,6 +121,8 @@ struct BifFunction{Tf, TFinp, Tdf, Tdfad, Tj, Tjad, TJinp, Td2f, Td2fc, Td3f, Td
     inplace::Bool
     "jet of the vector field."
     jet::Tjet
+    "Residual and jacobian at `(x, p)` from one call, `FJ(x, p) = (F(x, p), J(x, p))`, for a vector field whose two share most of their work. `nothing` when not given."
+    FJ::Tfj
 end
 
 # getters
@@ -142,6 +144,20 @@ jacobian(pb::BifFunction, x, p) = pb.J(x, p)
 function jacobian(pb::BifFunction{Tf, TFinp, Tdf, Tdfad, Nothing}, x, p) where {Tf, TFinp, Tdf, Tdfad}
     ForwardDiff.jacobian(z -> pb.F(z, p), x)
 end
+#####
+"""
+$(SIGNATURES)
+
+`(F(x, p), J(x, p))`: from the one call `FJ(x, p)` when the problem was given an `FJ`, else from `residual` and `jacobian`.
+"""
+function residual_and_jacobian(pb::BifFunction, x, p)
+    if has_FJ(pb)
+        return pb.FJ(x, p)
+    end
+    return residual(pb, x, p), jacobian(pb, x, p)
+end
+has_FJ(pb::BifFunction) = ~isnothing(pb.FJ)
+has_FJ(::AbstractBifurcationProblem) = false
 #####
 jacobian!(pb::BifFunction, J, x, p) = pb.J!(J, x, p)
 
@@ -318,6 +334,31 @@ function R01(::FiniteDifferences,
                 par; δ = getdelta(prob))
     dFdp = VI.zerovector(x)
     R01!(FiniteDifferences(), prob, dFdp, x, par, _get(par, getlens(prob)))
+    return dFdp
+end
+
+"""
+$(SIGNATURES)
+
+`∂_p F(x, p)` written into `dFdp` for the correctors and tangents of continuation: the problem's own `R01(x, par)` when the user passed one, else forward finite differences (`R01!(FiniteDifferences(), …)`).
+"""
+_dFdp!(prob::AbstractBifurcationProblem, dFdp, x, par, p, res_f = nothing) = R01!(FiniteDifferences(), prob, dFdp, x, par, p, res_f)
+
+function _dFdp!(prob::AbstractAllJetBifProblem, dFdp, x, par, p, res_f = nothing)
+    if has_R01_trait(prob) isa TraitUserPassed
+        return _copyto!(dFdp, R01(TraitUserPassed(), prob, x, set(par, getlens(prob), p)))
+    end
+    return R01!(FiniteDifferences(), prob, dFdp, x, par, p, res_f)
+end
+
+"""
+$(SIGNATURES)
+
+Out-of-place [`_dFdp!`](@ref) at the parameters `par`.
+"""
+function _dFdp(prob::AbstractBifurcationProblem, x, par)
+    dFdp = VI.zerovector(x)
+    _dFdp!(prob, dFdp, x, par, _get(par, getlens(prob)))
     return dFdp
 end
 
@@ -519,7 +560,8 @@ for (op, at, kd) in (
             Constructor for a bifurcation problem.
             
             ## Optional argument
-            - `R01` correspond to the computation of dₚF. Can be `AutoDiff(), FiniteDifferences()` or a function `dpF(x,par,p)`
+            - `R01` correspond to the computation of dₚF. Can be `AutoDiff(), FiniteDifferences()` or a function `dpF(x, par)`. The correctors and tangents of continuation (`PALC`, `MoorePenrose`, `Bordered`) use a passed function and finite differences otherwise.
+            - `FJ` function `FJ(x, p)` returning `(F(x, p), J(x, p))` from one evaluation. Newton's method in `PALC` calls it in place of `F` and `J`.
             """
             function $op(_F, u0, parms, lens = (@optic _);
                          jvp = nothing,
@@ -527,6 +569,7 @@ for (op, at, kd) in (
                          J = nothing,
                          J! = nothing,
                          Jᵗ = nothing,
+                         FJ = nothing,
                          d2F = nothing,
                          d2Fc = nothing,
                          d3F = nothing,
@@ -536,25 +579,26 @@ for (op, at, kd) in (
                          plot_solution = plot_default,
                          delta = _getprecision(u0),
                          save_solution = save_solution_default,
-                         inplace = false,
+                         inplace::Union{Nothing, Bool} = nothing,
                          update! = update_default,
                          R01 = AutoDiff(),
                          R02 = AutoDiff(),
                          R11 = FiniteDifferences(),
                          kwargs_jet...)
                 @assert lens isa Int || lens isa AllOpticTypes
+                inplace = something(inplace, _isinplace(_F))
                 new_lens = lens isa Int ? (@optic _[lens]) : lens
                 if _get(parms, new_lens) isa Int
                     @warn "You passed the parameter value $(_get(parms, new_lens)) for the optic `$new_lens` which is an integer. This may error. Please use a float."
                 end
-                Foop = if inplace || _isinplace(_F)
+                Foop = if inplace
                     # promote_type useful for R01 and R11
                     (x, p) -> _F(similar(x, promote_type(VI.scalartype(x), typeof(_get(p, new_lens)))), x, p)
                 else
                     _F
                 end
 
-                Finp = if inplace || _isinplace(_F)
+                Finp = if inplace
                     _F
                 else
                     (o, x, p) -> _copyto!(o, _F(x, p))
@@ -582,7 +626,8 @@ for (op, at, kd) in (
                                 issymmetric,
                                 delta,
                                 inplace,
-                                jet)
+                                jet,
+                                FJ)
                 return $op(vf,
                             u0,
                             parms,
@@ -625,6 +670,8 @@ residual(pb::AbstractAllJetBifProblem, x, p) = residual(pb.VF, x, p)
 residual!(pb::AbstractAllJetBifProblem, o, x, p) = residual!(pb.VF, o, x, p)
 jacobian(pb::AbstractAllJetBifProblem, x, p) = jacobian(pb.VF, x, p)
 jacobian!(pb::AbstractAllJetBifProblem, J, x, p) = jacobian!(pb.VF, J, x, p)
+residual_and_jacobian(pb::AbstractAllJetBifProblem, x, p) = residual_and_jacobian(pb.VF, x, p)
+has_FJ(pb::AbstractAllJetBifProblem) = has_FJ(pb.VF)
 jacobian_adjoint(pb::AbstractAllJetBifProblem, x, p) = jacobian_adjoint(pb.VF, x, p)
 dF(pb::AbstractAllJetBifProblem, x, p, dx) = dF(pb.VF, x, p, dx)
 d2F(pb::AbstractAllJetBifProblem, x, p, dx1, dx2) = d2F(pb.VF, x, p, dx1, dx2)
@@ -829,6 +876,7 @@ for op in (
         end
         (fr::$op)(x, p; kwargs...) = fr.user_record_from_solution(x, p; kwargs...)
         (fr::$op{Nothing})(x, p; kwargs...) = fr.vf_record_from_solution(x, p; kwargs...)
+        (fr::$op{Nothing, Nothing})(x, p; kwargs...) = (norm(x))
         $op(u::$op, vf) = u # constructor, do not iterate the same structure
     end
 end
