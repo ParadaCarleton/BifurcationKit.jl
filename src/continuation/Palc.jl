@@ -230,7 +230,7 @@ function newton_palc(iter::AbstractContinuationIterable,
     compute = callback((;x, res_f, residual = res, step, contparams, z0, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...)
 
     while (step < max_iterations) && (res > tol) && line_step && compute
-        R01!(prob, dFdp, x, par, p, res_f)
+        dFdp = R01(prob, x, set(par, paramlens, p))
         J = jacobian(prob, x, set(par, paramlens, p))
         
         # solve linear system

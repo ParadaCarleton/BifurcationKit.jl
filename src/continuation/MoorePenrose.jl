@@ -183,7 +183,7 @@ function newton_moore_penrose(iter::AbstractContinuationIterable,
 
     while (step < max_iterations) && (res > tol) && line_step && compute
         step += 1
-        R01!(prob, dFdp, x, par, p)
+        dFdp = R01(prob, x, set(par, paramlens, p))
         J = jacobian(prob, x, set(par, paramlens, p))
 
         if method === direct || method === pInv

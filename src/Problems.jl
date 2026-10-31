@@ -835,3 +835,6 @@ for op in (
     end
 end
 
+
+# Problems without a jet (periodic orbits, minimally augmented, DAE) differentiate by finite differences.
+R01(prob::AbstractBifurcationProblem, x, par) = R01(FiniteDifferences(), prob, x, par)

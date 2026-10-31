@@ -106,7 +106,7 @@ sol0 = zeros(par_cgl.N)
 # _J1 = FD.jacobian(z->Fcgl(z, par_cgl), _sol0) |> sparse
 # @test _J0 ≈ _J1
 
-prob = BifurcationKit.BifurcationProblem(Fcgl, sol0, par_cgl, (@optic _.r); J = Jcgl)
+prob = BifurcationKit.BifurcationProblem(Fcgl, sol0, par_cgl, (@optic _.r); J = Jcgl, R01 = BifurcationKit.FiniteDifferences())
 eigls = EigArpack(1.0, :LM)
 # eigls = DefaultEig()
 opt_newton = NewtonPar(tol = 1e-9, verbose = false, eigsolver = eigls, max_iterations = 20)
@@ -180,7 +180,7 @@ let
     @test_skip BK.converged(sol) # may fail on some device
 
     # user-passed jacobian
-    prob2 = BifurcationKit.BifurcationProblem(Fcgl, sol0, par_cgl, (@optic _.r); J = (x,p) -> (dx -> Jcgl(x,p)*dx))
+    prob2 = BifurcationKit.BifurcationProblem(Fcgl, sol0, par_cgl, (@optic _.r); J = (x,p) -> (dx -> Jcgl(x,p)*dx), R01 = BifurcationKit.FiniteDifferences())
     tw_model2 = BK.TWModel(re_make(prob, params = (par_cgl..., r = r_hopf - 0.01)), par_cgl.Db, copy(uold))
 end
 ####################################################################################################
