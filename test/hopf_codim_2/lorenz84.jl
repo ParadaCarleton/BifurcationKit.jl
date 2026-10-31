@@ -46,6 +46,7 @@ recordFromSolutionLor(u::BorderedArray, p; k...) = recordFromSolutionLor(u.u, p)
 
 prob = BK.ODEBifProblem(Lor, z0, parlor, (@optic _.F);
     J = jac_Lor,
+    R01 = BK.FiniteDifferences(),
     record_from_solution = recordFromSolutionLor,)
 
 alg = PALC(tangent = Bordered())
