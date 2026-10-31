@@ -77,8 +77,8 @@ function gettangent!(state::AbstractContinuationState,
     θ = getθ(iter)
     T = eltype(iter)
 
-    # dFdl = ∂_p F(z.u, z.p)
-    dFdl = _dFdp(iter.prob, state.z.u, setparam(iter, state.z.p))
+    # dFdl = (F(z.u, z.p + ϵ) - F(z.u, z.p)) / ϵ
+    dFdl = R01(iter.prob, state.z.u, setparam(iter, state.z.p))
 
     # compute jacobian at the current solution
     J = jacobian(iter.prob, state.z.u, setparam(iter, state.z.p))

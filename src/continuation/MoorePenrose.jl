@@ -135,6 +135,7 @@ function newton_moore_penrose(iter::AbstractContinuationIterable,
                              kwargs...)
     prob = getprob(iter)
     par = getparams(prob)
+    ϵ = getdelta(prob)
     paramlens = getlens(iter)
     contparams = getcontparams(iter)
     𝒯 = eltype(iter)
@@ -154,7 +155,7 @@ function newton_moore_penrose(iter::AbstractContinuationIterable,
     x = _copy(z_pred.u)
     p = z_pred.p
     res_f = residual(prob, x, set(par, paramlens, p))
-    dFdp = _dFdp(prob, x, set(par, paramlens, p))
+    dFdp = R01(prob, x, set(par, paramlens, p))
 
     res = normN(res_f)
     residuals = [res]
@@ -182,7 +183,7 @@ function newton_moore_penrose(iter::AbstractContinuationIterable,
 
     while (step < max_iterations) && (res > tol) && line_step && compute
         step += 1
-        _dFdp!(prob, dFdp, x, par, p)
+        R01!(prob, dFdp, x, par, p)
         J = jacobian(prob, x, set(par, paramlens, p))
 
         if method === direct || method === pInv
@@ -219,7 +220,8 @@ function newton_moore_penrose(iter::AbstractContinuationIterable,
 
         if _static_cond_iterative
             J = jacobian(prob, x, set(par, paramlens, p))
-            _dFdp!(prob, dFdp, x, par, p, res_f)
+            _copyto!(dFdp, residual(prob, x, set(par, paramlens, p + ϵ)))
+            dFdp = minus!!(dFdp, res_f); dFdp = VI.scale!!(dFdp, 1 / ϵ)
             # A = hcat(J, dFdp); A = vcat(A, ϕ')
             # ϕ .= A \ vcat(zero(x), 1)
             u, up, flag, itlinear2 = linsolver(J, dFdp, ϕ.u, ϕ.p, zero(x), one(𝒯), one(𝒯), one(𝒯)) # reminder: ξu, ξp
