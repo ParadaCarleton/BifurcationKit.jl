@@ -258,8 +258,8 @@ module NonlinearSolveExt
     """
     The termination condition of the NonlinearSolve cache of a corrector: after each Newton step it shows the iterate to `call` (the `callback` of the continuation, as `newton` and `newton_palc` do at every step), and stops when `call` returns `true`. `call` is `nothing` between solves, when the condition never stops. `steps` counts the iterates shown since `call` was set.
     """
-    mutable struct IterateStop <: NonlinearSolveBase.AbstractNonlinearTerminationMode
-        call::Any
+    mutable struct IterateStop{Tcall} <: NonlinearSolveBase.AbstractNonlinearTerminationMode
+        call::Union{Nothing, Tcall}
         steps::Int
     end
 
@@ -315,7 +315,7 @@ module NonlinearSolveExt
 
     #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # One NonlinearSolve cache is kept by the corrector between solves, rebuilt when the tolerance, the number of iterations or the size of the system change.
-    struct CacheKey{T, Tb}
+    struct CacheKey{T, Tb, Tcall}
         tol::T
         max_iterations::Int
         length::Int
@@ -335,7 +335,7 @@ module NonlinearSolveExt
 
     # `matrix`: the Jacobian is the operator `jacobian(u0, ctx)`, given as `jac_prototype`; otherwise NonlinearSolve takes `jacobian` for a dense linear solver and builds its own operator from `jvp` for an iterative one
     function solve_cache!(slot::Base.RefValue{Any}, corrector::NonlinearSolveCorrector, alg, residual, jacobian, jvp, u0, ctx, options::NewtonPar, call, bounds, matrix::Bool)
-        key = CacheKey(options.tol, options.max_iterations, length(u0), bounds)
+        key = CacheKey{typeof(options.tol), typeof(bounds), typeof(call)}(options.tol, options.max_iterations, length(u0), bounds)
         if !isnothing(slot[]) && slot[].key == key
             cache = slot[].cache
             # only passed when asked, so a NonlinearSolve without the keyword works with the default
@@ -351,7 +351,7 @@ module NonlinearSolveExt
                 f = SciMLBase.NonlinearFunction{false}(residual; jac = jacobian, jvp)
             end
             problem = SciMLBase.NonlinearProblem(f, u0, ctx; something(bounds, (;))...)
-            stop = IterateStop(nothing, 0)
+            stop = IterateStop{typeof(call)}(nothing, 0)
             cache = SciMLBase.init(problem, alg;
                 abstol = options.tol,
                 reltol = zero(options.tol),
@@ -360,8 +360,14 @@ module NonlinearSolveExt
                 corrector.solve_kwargs...)
             slot[] = (; key, cache, matrix, stop)
         end
-        # armed after `reinit!`, which may check the initial iterate
-        stop = slot[].stop
+        return solve_armed!(cache, slot[].stop, call)
+    end
+
+    """
+    Solve the cache with `stop` armed with `call`, after `reinit!`, which may check the initial iterate.
+    The slot is untyped; this call is where `stop` and `call` get concrete types.
+    """
+    function solve_armed!(cache, stop::IterateStop{Tcall}, call::Tcall) where {Tcall}
         stop.call, stop.steps = call, 0
         solution = SciMLBase.solve!(cache)
         stop.call = nothing
