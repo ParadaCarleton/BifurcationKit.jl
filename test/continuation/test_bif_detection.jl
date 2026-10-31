@@ -77,7 +77,7 @@ let
     x0 = zeros(size(par.L, 1))
 
     optc = ContinuationPar(p_min = -1., p_max = 10., ds = 0.1, max_steps = 150, detect_bifurcation = 3, save_eigenvectors = false)
-    prob = BK.ODEBifProblem(Ftb, x0, par, (@optic _.λ); J = Jtb, R01 = BK.FiniteDifferences())
+    prob = BK.ODEBifProblem(Ftb, x0, par, (@optic _.λ); J = Jtb)
     alg = PALC()
     br1 = continuation(prob, alg, optc)
     testBranch(br1)
