@@ -138,7 +138,7 @@ $(TYPEDFIELDS)
     corrector::Tcor = nothing
     "Step control by the quality of the corrector, a [`CorrectorQuality`](@ref) or `nothing` (the default). With `nothing`, `ds` is controlled by the number of Newton iterations, see the parameter `a` of [`ContinuationPar`](@ref)."
     step_control::Tctl = nothing
-    "Orientation test: reject a step whose new tangent has a negative dot product with the previous one (they point more than `π / 2` apart), as when the corrector converged onto a nearby part of the curve that runs the other way. A `Secant` tangent is the chord to the new point, so the test costs one dot product. A `Bordered` tangent is oriented as the curve is, by the sign of the determinant of the bordered matrix `[J dFdl; τ']` (Allgower and Georg, *Introduction to Numerical Continuation Methods*, definition (2.1.7)), with the sign fixed to the direction of travel at the start. That determinant needs a `MatrixBLS` solver and a dense LU factorisation of size `n + 1` per step, `O(n^3)`. Off by default."
+    "Orientation test: reject a step whose new tangent has a negative dot product with the previous one (they point more than `π / 2` apart), as when the corrector converged onto a nearby part of the curve that runs the other way. A `Secant` tangent is the chord to the new point, so the test costs one dot product. A `Bordered` tangent is oriented as the curve is, by the sign of the determinant of the bordered matrix `[J dFdl; τ']` (Allgower and Georg, *Introduction to Numerical Continuation Methods*, definition (2.1.7)), with the sign fixed to the direction of travel at the start. That determinant needs a `MatrixBLS` solver, and is read from the LU factorisation that solves for the new tangent. Off by default."
     orientation_check::Bool = false
     "The product `(u1, u2, p1, p2, θ)`, as a `DotTheta` is called, whose sign orients a `Bordered` tangent along the previous one when the determinant does not (`orientation_check` and `max_turn` off). It defaults to `dotθ`. Pass another when `dotθ`'s weights shrink a coordinate that should decide the direction, as point weights near a saturated variable can past a fold. It is reset at each accepted point as `dotθ` is (`reweight!`)."
     orientation_dot::Todot = dotθ
@@ -610,9 +610,6 @@ function newton_palc(iter::AbstractContinuationIterable,
                 else
                     α /= 2
                 end
-            end
-            if rejected
-                break
             end
             # the linesearch failed: res, res_f, res_n still hold the last rejected trial.
             # Recompute them at the accepted point (x, p), like `res = res0` in pde2path's nloopext.m
