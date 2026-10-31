@@ -162,8 +162,8 @@ opts_bratu = ContinuationPar(
             PALC(; corrector = NonlinearSolveCorrector(exact; bls = BorderedLinearSolve.DirectBLS(; inner = LUFactorization()))),
             opts_bratu,
         )
-        @test length(br.sol) == length(br_reference.sol)
-        @test maximum(abs, br.branch.param .- br_reference.branch.param) < 1.0e-8
+        @test length(br.sol) == length(br_default.sol)
+        @test maximum(abs, br.branch.param .- br_default.branch.param) < 1.0e-8
         @test any(diff(br.branch.param) .< 0)
     end
 
@@ -171,8 +171,8 @@ opts_bratu = ContinuationPar(
         # the same matrix object at every call, as a reusing `J` returns it
         prob = BifurcationProblem(F_bratu, zeros(20), (λ = 0.01,), (@optic _.λ); J = RewrittenJacobian(zeros(20, 20)))
         br = continuation(prob, PALC(; corrector = NonlinearSolveCorrector(exact)), opts_bratu)
-        @test length(br.sol) == length(br_reference.sol)
-        @test maximum(abs, br.branch.param .- br_reference.branch.param) < 1.0e-8
+        @test length(br.sol) == length(br_default.sol)
+        @test maximum(abs, br.branch.param .- br_default.branch.param) < 1.0e-8
     end
 
     @testset "a Jacobian carried across steps stays on the branch" begin
