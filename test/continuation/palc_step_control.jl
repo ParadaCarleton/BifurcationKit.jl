@@ -185,6 +185,17 @@ let
         @test BK.determinant_sign(lu(sparse(A))) == last(logabsdet(A))
     end
 end
+# the sign agrees with the exact determinant of the matrix as stored, also for nearly singular and Float32 matrices
+let
+    rng = Xoshiro(2)
+    exact_sign(A) = sign(det(big.(A)))
+    for T in (Float64, Float32), n in 2:8, scale in (1, 1e-3, 1e-6), _ in 1:10
+        A = randn(rng, T, n, n)
+        A[end, :] .= A[1, :] .+ T(scale) .* randn(rng, T, n) # a nearly dependent row
+        @test BK.determinant_sign(lu(A)) == exact_sign(A)
+        @test BK.determinant_sign(lu(sparse(A))) == exact_sign(A)
+    end
+end
 ####################################################################################################
 # orientation_check: determinant orientation of a Bordered tangent, rejection on a negative dot product
 let
