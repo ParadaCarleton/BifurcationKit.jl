@@ -274,7 +274,7 @@ module NonlinearSolveExt
     end
 
     "Whether the callback verdict `verdict` or a residual `res` within `tol` ends Newton's method, as in `newton_palc`."
-    ends_newton(verdict, res, tol) = !BK._continues(verdict) || res <= tol
+    ends_newton(verdict, res, tol) = !verdict || res <= tol
 
     "The call of an `IterateStop` for the bordered problem of PALC: the callback of `newton_palc` at an iterate."
     struct PALCIterate{Tcallback, Tkw, Tnorm, Tz0, Tcp, Topt, Tres}
