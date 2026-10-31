@@ -192,10 +192,12 @@ let
     for T in (Float64, Float32), n in 2:8, scale in (1, 1e-3, 1e-6), _ in 1:10
         A = randn(rng, T, n, n)
         A[end, :] .= A[1, :] .+ T(scale) .* randn(rng, T, n) # a nearly dependent row
-        @test BK.determinant_sign(lu(A)) == exact_sign(A)
-        @test BK.determinant_sign(lu(sparse(A))) == exact_sign(A)
+        @test BK.determinant_sign(lu(A; check = false)) == exact_sign(A)
+        @test BK.determinant_sign(lu(sparse(A); check = false)) == exact_sign(A)
     end
 end
+# an exactly singular matrix has determinant sign zero
+@test BK.determinant_sign(lu([1.0 2.0; 2.0 4.0]; check = false)) == 0
 # bordered_tangent_and_sign: the sign is that of the whole bordered matrix [J dFdl; θ τ' (1-θ) τp], and the tangent solves it
 let
     rng = Xoshiro(3)
