@@ -189,7 +189,8 @@ end
 let
     rng = Xoshiro(2)
     exact_sign(A) = sign(det(lu(big.(A); check = false)))
-    for T in (Float64, Float32), n in 2:8, scale in (1, 1e-3, 1e-6), _ in 1:10
+    # Float32 rounding (backward error ~1e-7) can flip the sign of a determinant near 1e-6 of the row norm
+    for (T, scales) in ((Float64, (1, 1e-3, 1e-6)), (Float32, (1, 1e-3))), n in 2:8, scale in scales, _ in 1:10
         A = randn(rng, T, n, n)
         A[end, :] .= A[1, :] .+ T(scale) .* randn(rng, T, n) # a nearly dependent row
         @test BK.determinant_sign(lu(A; check = false)) == exact_sign(A)
@@ -207,7 +208,7 @@ let
     iter = ContIterable(prob, PALC(; tangent = Bordered(), orientation_check = true), options)
     state, _ = iterate(iter)
     θ = BK.getθ(iter)
-    for T in (Float64, Float32), scale in (1, 1e-3, 1e-6), _ in 1:20
+    for (T, scales) in ((Float64, (1, 1e-3, 1e-6)), (Float32, (1, 1e-3))), scale in scales, _ in 1:20
         J = randn(rng, T, n, n)
         J[end, :] .= J[1, :] .+ T(scale) .* randn(rng, T, n) # nearly singular, so the sign is the delicate part
         dFdl = randn(rng, T, n)
