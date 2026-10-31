@@ -189,12 +189,18 @@ end
 let
     rng = Xoshiro(2)
     exact_sign(A) = sign(det(lu(big.(A); check = false)))
-    # Float32 rounding (backward error ~1e-7) can flip the sign of a determinant near 1e-6 of the row norm
-    for (T, scales) in ((Float64, (1, 1e-3, 1e-6)), (Float32, (1, 1e-3))), n in 2:8, scale in scales, _ in 1:10
+    # the sign is that of the matrix the factors multiply back to, whatever the rounding
+    factored_sign(F) = exact_sign((big.(F.L) * big.(F.U))[invperm(F.p), :])
+    for T in (Float64, Float32), n in 2:8, scale in (1, 1e-3, 1e-6), _ in 1:10
         A = randn(rng, T, n, n)
         A[end, :] .= A[1, :] .+ T(scale) .* randn(rng, T, n) # a nearly dependent row
-        @test BK.determinant_sign(lu(A; check = false)) == exact_sign(A)
-        @test BK.determinant_sign(lu(sparse(A); check = false)) == exact_sign(A)
+        F = lu(A; check = false)
+        @test BK.determinant_sign(F) == factored_sign(F)
+        # Float32 rounding (backward error ~1e-7) can flip the sign of A itself once its determinant is ~1e-6 of the row norm
+        if T === Float64 || scale >= 1e-3
+            @test BK.determinant_sign(F) == exact_sign(A)
+            @test BK.determinant_sign(lu(sparse(A); check = false)) == exact_sign(A)
+        end
     end
 end
 # an exactly singular matrix has determinant sign zero
