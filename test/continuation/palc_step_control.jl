@@ -196,6 +196,26 @@ let
         @test BK.determinant_sign(lu(sparse(A))) == exact_sign(A)
     end
 end
+# bordered_tangent_and_sign: the sign is that of the whole bordered matrix [J dFdl; θ τ' (1-θ) τp], and the tangent solves it
+let
+    rng = Xoshiro(3)
+    n = 5
+    prob = BifurcationProblem((u, p) -> u .- p.λ, zeros(n), (λ = 0.0,), (@optic _.λ))
+    options = ContinuationPar(ds = 0.1, p_min = -1., p_max = 1., max_steps = 3, detect_bifurcation = 0)
+    iter = ContIterable(prob, PALC(; tangent = Bordered(), orientation_check = true), options)
+    state, _ = iterate(iter)
+    θ = BK.getθ(iter)
+    for T in (Float64, Float32), scale in (1, 1e-3, 1e-6), _ in 1:20
+        J = randn(rng, T, n, n)
+        J[end, :] .= J[1, :] .+ T(scale) .* randn(rng, T, n) # nearly singular, so the sign is the delicate part
+        dFdl = randn(rng, T, n)
+        τu, τp = T.(state.τ.u), T(state.τ.p)
+        full = [J dFdl; T(θ) .* τu' T(1 - θ) * τp]
+        tangent, corner, orientation = BK.bordered_tangent_and_sign(BK.MatrixBLS(), iter, state, J, dFdl, zeros(T, n), one(T))
+        @test orientation == sign(det(big.(full)))
+        @test maximum(abs, full * vcat(tangent, corner) .- vcat(zeros(T, n), one(T))) < sqrt(eps(T)) * max(1, maximum(abs, vcat(tangent, corner)))
+    end
+end
 ####################################################################################################
 # orientation_check: determinant orientation of a Bordered tangent, rejection on a negative dot product
 let
