@@ -141,7 +141,8 @@ module NonlinearSolveExt
     """
     function refreshed_cache(cache::BorderedLinearSolve.BorderedCache, problem, bls, isfresh)
         if isfresh || problem.J !== cache.prob.J
-            cache.inner = SciMLBase.init(problem, bls).inner
+            # assigning `A` marks the LinearSolve cache for refactorization and keeps its workspace
+            cache.inner.A = BorderedLinearSolve._flatten_operator(problem.J, problem.f)
         end
         cache.prob = problem
         return cache
