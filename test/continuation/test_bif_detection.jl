@@ -77,7 +77,7 @@ let
     x0 = zeros(size(par.L, 1))
 
     optc = ContinuationPar(p_min = -1., p_max = 10., ds = 0.1, max_steps = 150, detect_bifurcation = 3, save_eigenvectors = false)
-    prob = BK.ODEBifProblem(Ftb, x0, par, (@optic _.λ); J = Jtb)
+    prob = BK.ODEBifProblem(Ftb, x0, par, (@optic _.λ); J = Jtb, R01 = BK.FiniteDifferences())
     alg = PALC()
     br1 = continuation(prob, alg, optc)
     testBranch(br1)
@@ -133,7 +133,7 @@ let
 
     opts = ContinuationPar(dsmax = 0.1, ds = 0.001, max_steps = 135, p_min = -3., p_max = 4.0, newton_options = NewtonPar(max_iterations = 5), detect_bifurcation = 3, n_inversion = 6, dsmin_bisection = 1e-9, max_bisection_steps = 15, nev = 2)
 
-    prob = BK.ODEBifProblem(Ftb, -2ones(2), par, (@optic _.p1); record_from_solution = (x,p;k...)->x[1])
+    prob = BK.ODEBifProblem(Ftb, -2ones(2), par, (@optic _.p1); R01 = BK.FiniteDifferences(), record_from_solution = (x,p;k...)->x[1])
     alg = PALC()
     br = continuation(prob, alg, (@set opts.detect_bifurcation = 3))
         show(br)
