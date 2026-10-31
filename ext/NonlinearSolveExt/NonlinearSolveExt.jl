@@ -240,9 +240,7 @@ module NonlinearSolveExt
         return BorderedJacobian(check_matrix(J), dFdp, ctx.row, ctx.c)
     end
 
-    # A matrix-free `J` (a function `dx -> J dx`) gives NonlinearSolve the product with `[J ∂ₚF; row' c]` at the iterate `w`, which NonlinearSolve binds to the iterate at every step:
-    # each step is a Newton step, and `jacobian_reuse` keeps only the preconditioner, built by the `precs` of the iterative linear solver for the whole bordered system.
-    # The iterative linear solver solves the whole bordered system: BorderedLinearSolve keeps its inner solver's cache for one operator, so each iterate would rebuild the preconditioner.
+    """Product of `v` with the bordered matrix `[J ∂ₚF; row' c]` at the iterate `w`, for a matrix-free `J`."""
     function palc_jvp(v::ArrayPartition, w::ArrayPartition, ctx::PALCCache)
         (; J, dFdp) = iterate_jacobian!(ctx, w)
         vx, vp = palc_state(v), palc_parameter(v)
@@ -436,6 +434,9 @@ module NonlinearSolveExt
         if matrix
             alg, jvp = check_palc_algorithm(corrector), nothing
         else
+            if corrector.reuse_jacobian
+                throw(ArgumentError("`reuse_jacobian = true` does nothing for a matrix-free Jacobian: NonlinearSolveBase's `update_A!` reassigns `A` at every solve of an iterative linear solver, so LinearSolve rebuilds the preconditioner each time. Use `reuse_jacobian = false`."))
+            end
             alg, jvp = corrector.alg, palc_jvp
         end
         call = PALCIterate(callback, NamedTuple(kwargs), bnorm, z0, contparams, options, residuals)
