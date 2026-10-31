@@ -188,9 +188,10 @@ end
 # the sign agrees with the exact determinant of the matrix as stored, also for nearly singular and Float32 matrices
 let
     rng = Xoshiro(2)
-    exact_sign(A) = sign(det(lu(big.(A); check = false)))
+    # exact rational arithmetic: a BigFloat elimination of a singular matrix leaves rounding noise as pivots
+    exact_sign(A) = sign(det(lu(Rational{BigInt}.(A); check = false)))
     # the sign is that of the matrix the factors multiply back to, whatever the rounding
-    factored_sign(F) = exact_sign((big.(F.L) * big.(F.U))[invperm(F.p), :])
+    factored_sign(F) = exact_sign((Rational{BigInt}.(F.L) * Rational{BigInt}.(F.U))[invperm(F.p), :])
     for T in (Float64, Float32), n in 2:8, scale in (1, 1e-3, 1e-6), _ in 1:10
         A = randn(rng, T, n, n)
         A[end, :] .= A[1, :] .+ T(scale) .* randn(rng, T, n) # a nearly dependent row
@@ -221,7 +222,7 @@ let
         τu, τp = T.(state.τ.u), T(state.τ.p)
         full = [J dFdl; T(θ / n) .* τu' T(1 - θ) * τp] # the arc length row weights τu by θ/N
         tangent, corner, orientation = BK.bordered_tangent_and_sign(BK.MatrixBLS(), iter, state, J, dFdl, zeros(T, n), one(T))
-        @test orientation == sign(det(lu(big.(full); check = false)))
+        @test orientation == sign(det(lu(Rational{BigInt}.(full); check = false)))
         @test maximum(abs, full * vcat(tangent, corner) .- vcat(zeros(T, n), one(T))) < sqrt(eps(T)) * max(1, maximum(abs, vcat(tangent, corner)))
     end
 end
