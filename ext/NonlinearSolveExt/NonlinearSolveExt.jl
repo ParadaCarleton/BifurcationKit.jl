@@ -255,26 +255,10 @@ module NonlinearSolveExt
     end
 
     #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    """
-    The termination condition of the NonlinearSolve cache of a corrector: after each Newton step it shows the iterate to `call` (the `callback` of the continuation, as `newton` and `newton_palc` do at every step), and stops when `call` returns `true`. `call` is `nothing` between solves, when the condition never stops. `steps` counts the iterates shown since `call` was set.
-    """
-    mutable struct IterateStop{Tcall} <: NonlinearSolveBase.AbstractNonlinearTerminationMode
-        call::Union{Nothing, Tcall}
-        steps::Int
-    end
-
-    function NonlinearSolveBase.check_convergence(stop::IterateStop, residual, state, ::Any, abstol, ::Any)::Bool
-        if isnothing(stop.call)
-            return false
-        end
-        stop.steps += 1
-        return stop.call(state, residual, stop.steps, abstol)
-    end
-
     "Whether the callback verdict `verdict` or a residual `res` within `tol` ends Newton's method, as in `newton_palc`."
     ends_newton(verdict, res, tol) = !BK._continues(verdict) || res <= tol
 
-    "The call of an `IterateStop` for the bordered problem of PALC: the callback of `newton_palc` at an iterate."
+    "The call of the step loop for the bordered problem of PALC: the callback of `newton_palc` at an iterate."
     struct PALCIterate{Tcallback, Tkw, Tnorm, Tz0, Tzp, Tds, Tcp, Topt, Tres}
         callback::Tcallback
         kwargs::Tkw
@@ -296,7 +280,7 @@ module NonlinearSolveExt
         return ends_newton(verdict, res, tol)
     end
 
-    "The call of an `IterateStop` for a Newton solve at a fixed parameter: the callback of `newton` at an iterate."
+    "The call of the step loop for a Newton solve at a fixed parameter: the callback of `newton` at an iterate."
     struct FixedIterate{Tcallback, Tkw, Tnorm, Tx0, Topt, Tres}
         callback::Tcallback
         kwargs::Tkw
@@ -315,11 +299,12 @@ module NonlinearSolveExt
 
     #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # One NonlinearSolve cache is kept by the corrector between solves, rebuilt when the tolerance, the number of iterations or the size of the system change.
-    struct CacheKey{T, Tb, Tcall}
+    struct CacheKey{T, Tb, Tn}
         tol::T
         max_iterations::Int
         length::Int
         bounds::Tb
+        norm::Tn
     end
 
     # `p ∈ [p_min, p_max]` as the box of the parameter of PALC's unknown, for an algorithm that handles bounds
@@ -334,8 +319,8 @@ module NonlinearSolveExt
     end
 
     # `matrix`: the Jacobian is the operator `jacobian(u0, ctx)`, given as `jac_prototype`; otherwise NonlinearSolve takes `jacobian` for a dense linear solver and builds its own operator from `jvp` for an iterative one
-    function solve_cache!(slot::Base.RefValue{Any}, corrector::NonlinearSolveCorrector, alg, residual, jacobian, jvp, u0, ctx, options::NewtonPar, call, bounds, matrix::Bool)
-        key = CacheKey{typeof(options.tol), typeof(bounds), typeof(call)}(options.tol, options.max_iterations, length(u0), bounds)
+    function solve_cache!(slot::Base.RefValue{Any}, corrector::NonlinearSolveCorrector, alg, residual, jacobian, jvp, u0, ctx, options::NewtonPar, call, bounds, norm, matrix::Bool)
+        key = CacheKey(options.tol, options.max_iterations, length(u0), bounds, norm)
         if !isnothing(slot[]) && slot[].key == key
             cache = slot[].cache
             # only passed when asked, so a NonlinearSolve without the keyword works with the default
@@ -351,28 +336,33 @@ module NonlinearSolveExt
                 f = SciMLBase.NonlinearFunction{false}(residual; jac = jacobian, jvp)
             end
             problem = SciMLBase.NonlinearProblem(f, u0, ctx; something(bounds, (;))...)
-            stop = IterateStop{typeof(call)}(nothing, 0)
             cache = SciMLBase.init(problem, alg;
                 abstol = options.tol,
                 reltol = zero(options.tol),
                 maxiters = options.max_iterations,
-                termination_condition = stop,
+                termination_condition = NonlinearSolveBase.AbsNormTerminationMode(norm),
                 corrector.solve_kwargs...)
-            slot[] = (; key, cache, matrix, stop)
+            slot[] = (; key, cache, matrix)
         end
-        return solve_armed!(cache, slot[].stop, call)
+        return solve_steps!(cache, call, options.tol)
     end
 
     """
-    Solve the cache with `stop` armed with `call`, after `reinit!`, which may check the initial iterate.
-    The slot is untyped; this call is where `stop` and `call` get concrete types.
+    Step `cache` until it terminates or `call` ends Newton's method, showing `call` each iterate once, then finish as `solve!` does.
+    The cache stays untyped in its slot; this call is where its type becomes concrete.
     """
-    function solve_armed!(cache, stop::IterateStop{Tcall}, call::Tcall) where {Tcall}
-        stop.call = call
-        stop.steps = 0
-        solution = SciMLBase.solve!(cache)
-        stop.call = nothing
-        return solution
+    function solve_steps!(cache, call, tol)
+        step = 0
+        while NonlinearSolveBase.not_terminated(cache)
+            SciMLBase.step!(cache)
+            step += 1
+            if call(NonlinearSolveBase.get_u(cache), NonlinearSolveBase.get_fu(cache), step, tol)
+                cache.retcode = SciMLBase.ReturnCode.Success
+                cache.force_stop = true
+            end
+        end
+        # a terminated cache only gets its return code, residual and solution assembled
+        return SciMLBase.solve!(cache)
     end
 
     # whether the Jacobian of the problem is a matrix, which PALC borders with BorderedLinearSolve; read once, at the first corrector
@@ -402,7 +392,7 @@ module NonlinearSolveExt
         end
         residuals = [res]
         call = FixedIterate(callback, NamedTuple(kwargs), normN, x0, options, residuals)
-        sol = solve_cache!(corrector.fixed_cache, corrector, corrector.alg, fixed_residual, fixed_jacobian, fixed_jvp, x0, ctx, options, call, nothing, false)
+        sol = solve_cache!(corrector.fixed_cache, corrector, corrector.alg, fixed_residual, fixed_jacobian, fixed_jvp, x0, ctx, options, call, nothing, normN, false)
         resend = normN(sol.resid)
         step = sol.stats.nsteps
         flag = BK._converged(SciMLBase.successful_retcode(sol) & (resend < tol),
@@ -447,7 +437,7 @@ module NonlinearSolveExt
             alg, jvp = corrector.alg, palc_jvp
         end
         call = PALCIterate(callback, NamedTuple(kwargs), bnorm, z0, z_pred, state.ds, contparams, options, residuals)
-        sol = solve_cache!(corrector.palc_cache, corrector, alg, palc_residual, palc_jacobian, jvp, w0, ctx, contparams.newton_options, call, palc_bounds(alg, w0, p_min, p_max), matrix)
+        sol = solve_cache!(corrector.palc_cache, corrector, alg, palc_residual, palc_jacobian, jvp, w0, ctx, contparams.newton_options, call, palc_bounds(alg, w0, p_min, p_max), bnorm, matrix)
         x, p = BK._copy(palc_state(sol.u)), palc_parameter(sol.u)
         resend = bnorm(sol.resid)
         step = sol.stats.nsteps
