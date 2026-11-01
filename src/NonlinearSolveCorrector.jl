@@ -53,7 +53,7 @@ struct NonlinearSolveCorrector{Talg, Tpalc, Tkw <: NamedTuple} <: AbstractNonLin
     solve_kwargs::Tkw
     "carry the Jacobian from one corrector to the next (`reinit!(...; reuse_jacobian)`)"
     reuse_jacobian::Bool
-    "cache of the bordered problem of PALC, built at the first corrector"
+    "cache of the bordered problem of PALC, built at the first corrector; both caches are untyped because their type depends on the problem, and `solve_armed!` narrows each read"
     palc_cache::Base.RefValue{Any}
     "cache of the problem at fixed parameter (Natural, `solve`), built at the first corrector"
     fixed_cache::Base.RefValue{Any}
