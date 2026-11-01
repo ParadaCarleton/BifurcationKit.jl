@@ -51,17 +51,15 @@ J_bratu_free(x, p) =dx -> J_bratu(x, p) * dx
 
 # `precs` of `KrylovJL_GMRES`: the LU of the dense Jacobian (bordered by PALC), counting its builds
 struct DenseLUPreconditioner
-    "the parameter of a solve at fixed parameter, whose unknown is the state alone"
-    λ::Float64
     builds::Base.RefValue{Int}
 end
 
 # the state and the parameter of the unknown `u` of the corrector: `ArrayPartition(x, [p])` for PALC, `x` at the fixed parameter `λ`
-dense_point(u::BK.RecursiveArrayTools.ArrayPartition, λ) = (u.x[1], only(u.x[2]))
-dense_point(u::AbstractVector, λ) = (u, λ)
+dense_point(u::BK.RecursiveArrayTools.ArrayPartition, ::Any) = (u.x[1], only(u.x[2]))
+dense_point(u::AbstractVector, context) = (u, context.par.λ)
 
 function (preconditioner::DenseLUPreconditioner)(A, ::Any)
-    x, λ = dense_point(A.u, preconditioner.λ)
+    x, λ = dense_point(A.u, A.p)
     preconditioner.builds[] += 1
     return (lu(BK.corrector_matrix(A.p, A.u, Matrix(J_bratu(x, (; λ))))), I)
 end
@@ -350,7 +348,7 @@ end
         )
         builds = Ref(0)
         alg = NewtonRaphson(;
-            linsolve = KrylovJL_GMRES(; precs = DenseLUPreconditioner(1.0, builds)),
+            linsolve = KrylovJL_GMRES(; precs = DenseLUPreconditioner(builds)),
             jacobian_reuse = free_policy,
         )
         sol1 = BK.solve(prob, NonlinearSolveCorrector(alg), NewtonPar(tol = 1.0e-9))
@@ -377,7 +375,7 @@ end
             # GMRES at the default relative tolerance leaves residuals above `tol`, which BifurcationKit rejects as a failed step
             alg = NewtonRaphson(;
                 linsolve = KrylovJL_GMRES(;
-                    precs = DenseLUPreconditioner(NaN, builds),
+                    precs = DenseLUPreconditioner(builds),
                     atol = 1.0e-12,
                     rtol = 1.0e-12,
                 ),
@@ -433,10 +431,8 @@ end
         par = (a = 0.3,)
         x = zeros(3)
         τ = BK.BorderedArray(ones(3), 1.0)
-        bordered_dFdp(prob) = ext.palc_jacobian(
-            ext.ArrayPartition(x, [par.a]),
-            ext.PALCCache(prob, par, (; τ), BK.DotTheta(), 0.5),
-        ).dFdp
+        w0 = ext.ArrayPartition(x, [par.a])
+        bordered_dFdp(prob) = ext.palc_jacobian(w0, ext.palc_context(prob, BK.BorderedArray(x, par.a), τ, 0.1, BK.DotTheta(), 0.5, w0, nothing)).dFdp
 
         # the default jet differentiates automatically
         prob_auto = BifurcationProblem(F_fast, x, par, (@optic _.a))
@@ -446,6 +442,25 @@ end
         # a derivative passed by the user is the one used
         prob_user = BifurcationProblem(F_fast, x, par, (@optic _.a); R01 = (x, par) -> fill(7.0, length(x)))
         @test bordered_dFdp(prob_user) == fill(7.0, 3)
+    end
+
+    @testset "the caches of the continuation state fit its correctors" begin
+        ext = Base.get_extension(BK, :NonlinearSolveExt)
+        par = (λ = 0.5,)
+        newton = NewtonPar(tol = 1.0e-10)
+        u_a = BK.solve(re_make(prob_bratu; params = par, u0 = fill(0.1, 20)), Newton(), newton).u
+        corrector = NonlinearSolveCorrector(exact)
+        it = BK.ContIterable(prob_bratu, PALC(; corrector), opts_bratu)
+        z0 = BK.BorderedArray(u_a, 0.5)
+        caches = BK.solver_caches(it.alg, it, z0)
+        # the contexts of a solve have the types of the caches' contexts, so no solve builds a temporary cache
+        w0 = ext.ArrayPartition(copy(u_a), [0.5])
+        ctx = ext.palc_context(prob_bratu, z0, z0, 0.1, BK.DotTheta(), 0.5, w0, ext.template_context(ext.palc_slot(caches)))
+        @test ctx isa typeof(caches.palc.proto)
+        fixed_ctx = ext.fixed_context(prob_bratu, par, u_a, ext.template_context(ext.fixed_slot(caches)))
+        @test fixed_ctx isa typeof(caches.fixed.proto)
+        # a corrector of other types gets no cache from the state
+        @test isnothing(BK.solver_caches(Natural(), it, z0))
     end
 
     @testset "a step! loop that never stops early gives the solution of solve!" begin
@@ -462,9 +477,9 @@ end
         bounded = BoundedTrustRegion(; linsolve = LUFactorization())
 
         # (algorithm, problem, residual, jacobian, jvp, bounds) of a fixed-parameter solve and of a bordered PALC solve
-        fixed(prob, alg) = (alg, ext.FixedContext(prob, par), ext.fixed_residual, ext.fixed_jacobian, ext.fixed_jvp, nothing)
+        fixed(prob, alg) = (alg, ext.fixed_context(prob, par, fill(0.1, 20), nothing), ext.fixed_residual, ext.fixed_jacobian, ext.fixed_jvp, nothing)
         function bordered(prob, alg, bounds)
-            ctx = ext.PALCCache(prob, par, state, BK.DotTheta(), 0.5)
+            ctx = ext.palc_context(prob, BK.getsolution(state), state.τ, state.ds, BK.DotTheta(), 0.5, predictor, nothing)
             corrector = NonlinearSolveCorrector(alg)
             usable = isnothing(corrector.palc_alg) ? alg : corrector.palc_alg
             return (usable, ctx, ext.palc_residual, ext.palc_jacobian, ext.palc_jvp, bounds)

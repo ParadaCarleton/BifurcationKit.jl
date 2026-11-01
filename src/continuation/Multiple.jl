@@ -35,6 +35,7 @@ Multiple(x0, α, nb; k...) = Multiple(PALC(), x0, α, nb; k...)
 Base.empty!(alg::Multiple) = (alg.currentind = 1; alg.pmimax = 1)
 get_bordered_linsolver(alg::Multiple) = get_bordered_linsolver(alg.alg)
 getdot(alg::Multiple) = getdot(alg.alg)
+solver_caches(alg::Multiple, it::AbstractContinuationIterable, z0::Any) = solver_caches(alg.alg, it, z0)
 # important for bisection algorithm
 internal_adaptation!(alg::Multiple, onoroff::Bool) = internal_adaptation!(alg.alg, onoroff)
 @inline getθ(alg::Multiple) = getθ(alg.alg)

@@ -14,6 +14,7 @@ struct Natural{Tcor} <: AbstractContinuationAlgorithm
     corrector::Tcor
 end
 Natural(bothside::Bool = false; corrector = nothing) = Natural(bothside, corrector)
+solver_caches(alg::Natural, it::AbstractContinuationIterable, z0::Any) = solver_caches(alg.corrector, it, z0, nothing)
 # important for bisection algorithm, switch on / off internal adaptive behavior
 internal_adaptation!(::Natural, ::Bool) = nothing
 
@@ -40,6 +41,7 @@ function corrector!(state::AbstractContinuationState,
                     alg::Natural; 
                     kwargs...)
     sol = _corrector_newton(alg.corrector,
+                state.solver,
                 it.prob,
                 state.z_pred.u,
                 setparam(it, clamp_predp(state.z_pred.p, it)), 
