@@ -39,7 +39,11 @@ let
     lenient = CorrectorQuality(max_distance = 0.4, rejects_contraction = false)
     @test BK.rejects_step(lenient, quality, 0.4, tol)
     @test ~BK.rejects_step(lenient, after_first, 0.3, tol)
-    @test BK.observe(lenient, after_first, 0.1, tol).deceleration ≈ after_second.deceleration
+    # a fast contraction (0.9 > 0.6) asks for more deceleration than either distance (0.1, 0.09 < 0.4) does
+    lenient_first = BK.observe(lenient, quality, 0.1, tol)
+    lenient_second = BK.observe(lenient, lenient_first, 0.09, tol)
+    @test lenient_second.deceleration ≈ 1.1 * sqrt(0.09 / (0.1 + tol * 0.1) / 0.6)
+    @test lenient_second.deceleration > 1.1 * sqrt(0.1 / 0.4)
     @test !CorrectorQuality{Float32}(lenient).rejects_contraction
 
     # a test that is off neither rejects a step nor slows the next one
@@ -190,11 +194,13 @@ let
     # accepts it (`residual <= tol`); a NaN residual reaches no tangent
     exact = BK.PALCStepCheck(state, iter, iter.alg, nothing, 0.0, Returns(true))
     state.cache = BK._update(state.cache; started = true, rejected = false)
-    closing(φ::Real, residual::Real) = (x = point(φ).u, p = point(φ).p, residual)
-    @test exact(closing(φ0 - 2.0, 0.0)) === false
-    @test exact(closing(φ0 + 0.4, 0.0)) === true
-    @test exact(closing(φ0 - 2.0, NaN)) === true
-    @test BK.PALCStepCheck(state, iter, iter.alg, nothing, 0.0, Returns(BK.NewtonConverged()))(closing(φ0 - 2.0, 1.0)) === false
+    function closing(position::BorderedArray, residual::Real)::NamedTuple
+        (x = position.u, p = position.p, residual)
+    end
+    @test exact(closing(point(φ0 - 2.0), 0.0)) === false
+    @test exact(closing(point(φ0 + 0.4), 0.0)) === true
+    @test exact(closing(point(φ0 - 2.0), NaN)) === true
+    @test BK.PALCStepCheck(state, iter, iter.alg, nothing, 0.0, Returns(BK.NewtonConverged()))(closing(point(φ0 - 2.0), 1.0)) === false
     # the orientation sign flips the whole field
     state.cache = BK._update(state.cache; orientation = -1)
     @test BK.bordered_tangent(state, iter, point(φ0 + 0.4), dotθ; by_determinant = true).p ≈ -unit_tangent(φ0 + 0.4).p rtol = 1e-6
