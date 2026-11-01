@@ -77,6 +77,13 @@ opts_bratu = ContinuationPar(
     newton_options = NewtonPar(tol = 1.0e-10),
 )
 
+# the solution, tangent and step of a PALC step, as the corrector reads them from the continuation state
+struct StepState{Tv} <: BK.AbstractContinuationState{Tv}
+    z::BK.BorderedArray{Tv, Float64}
+    τ::BK.BorderedArray{Tv, Float64}
+    ds::Float64
+end
+
 @testset "NonlinearSolveCorrector" begin
     # BifurcationKit's own Newton method with p left free, as the NonlinearSolve correctors leave it: a step that converges past a bound is corrected at the bound
     br_reference = continuation(prob_bratu, PALC(; corrector = BK.FreeParameterNewton()), opts_bratu)
@@ -439,6 +446,58 @@ opts_bratu = ContinuationPar(
         # a derivative passed by the user is the one used
         prob_user = BifurcationProblem(F_fast, x, par, (@optic _.a); R01 = (x, par) -> fill(7.0, length(x)))
         @test bordered_dFdp(prob_user) == fill(7.0, 3)
+    end
+
+    @testset "a step! loop that never stops early gives the solution of solve!" begin
+        ext = Base.get_extension(BK, :NonlinearSolveExt)
+        par = (λ = 0.5,)
+        newton = NewtonPar(tol = 1.0e-10)
+        u_a = BK.solve(re_make(prob_bratu; params = par, u0 = fill(0.1, 20)), Newton(), newton).u
+        u_b = BK.solve(re_make(prob_bratu; params = (λ = 0.6,), u0 = u_a), Newton(), newton).u
+        # a secant tangent and a predictor of the PALC step from (u_a, 0.5)
+        τ = BK.BorderedArray((u_b .- u_a) ./ 0.1, 1.0)
+        state = StepState{Vector{Float64}}(BK.BorderedArray(u_a, 0.5), τ, 0.1)
+        predictor = ext.ArrayPartition(u_a .+ 0.1 .* τ.u, [0.6])
+        krylov = KrylovJL_GMRES(; atol = 1.0e-12, rtol = 1.0e-12)
+        bounded = BoundedTrustRegion(; linsolve = LUFactorization())
+
+        # (algorithm, problem, residual, jacobian, jvp, bounds) of a fixed-parameter solve and of a bordered PALC solve
+        fixed(prob, alg) = (alg, ext.FixedContext(prob, par), ext.fixed_residual, ext.fixed_jacobian, ext.fixed_jvp, nothing)
+        function bordered(prob, alg, bounds)
+            ctx = ext.PALCCache(prob, par, state, BK.DotTheta(), 0.5)
+            corrector = NonlinearSolveCorrector(alg)
+            usable = isnothing(corrector.palc_alg) ? alg : corrector.palc_alg
+            return (usable, ctx, ext.palc_residual, ext.palc_jacobian, ext.palc_jvp, bounds)
+        end
+        cases = Dict(
+            "fixed, dense" => (fixed(prob_bratu, exact), fill(0.1, 20)),
+            "fixed, Krylov" => (fixed(prob_free, NewtonRaphson(; linsolve = krylov)), fill(0.1, 20)),
+            "PALC, dense" => (bordered(prob_bratu, exact, nothing), predictor),
+            "PALC, bounded" => (bordered(prob_bratu, bounded, (; lb = ext.ArrayPartition(fill(-Inf, 20), [0.0]), ub = ext.ArrayPartition(fill(Inf, 20), [0.62]))), predictor),
+        )
+        for (name, ((alg, ctx, residual, jacobian, jvp, bounds), u0)) in cases
+            matrix = occursin("dense", name) || occursin("bounded", name)
+            make_cache() = begin
+                f = matrix ?
+                    NonlinearSolve.SciMLBase.NonlinearFunction{false}(residual; jac = jacobian, jac_prototype = jacobian(u0, ctx)) :
+                    NonlinearSolve.SciMLBase.NonlinearFunction{false}(residual; jac = jacobian, jvp)
+                problem = NonlinearSolve.SciMLBase.NonlinearProblem(f, u0, ctx; something(bounds, (;))...)
+                NonlinearSolve.SciMLBase.init(problem, alg; abstol = 1.0e-10, maxiters = 30)
+            end
+            solved = NonlinearSolve.SciMLBase.solve!(make_cache())
+            cache = make_cache()
+            while NonlinearSolve.NonlinearSolveBase.not_terminated(cache)
+                NonlinearSolve.SciMLBase.step!(cache)
+            end
+            finished = NonlinearSolve.SciMLBase.solve!(cache)
+            @testset "$name" begin
+                @test finished.u == solved.u
+                @test finished.retcode == solved.retcode
+                @test finished.stats.nsteps == solved.stats.nsteps
+                @test finished.stats.nsolve == solved.stats.nsolve
+                @test solved.stats.nsteps > 0
+            end
+        end
     end
 
     @testset "Fold and Hopf continuation" begin
