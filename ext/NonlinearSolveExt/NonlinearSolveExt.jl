@@ -368,7 +368,8 @@ module NonlinearSolveExt
     The slot is untyped; this call is where `stop` and `call` get concrete types.
     """
     function solve_armed!(cache, stop::IterateStop{Tcall}, call::Tcall) where {Tcall}
-        stop.call, stop.steps = call, 0
+        stop.call = call
+        stop.steps = 0
         solution = SciMLBase.solve!(cache)
         stop.call = nothing
         return solution
