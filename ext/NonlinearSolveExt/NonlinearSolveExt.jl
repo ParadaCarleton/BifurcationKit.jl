@@ -455,7 +455,7 @@ module NonlinearSolveExt
         res = normN(fx)
         compute = callback((; x = x0, fx, J = nothing, residual = res, step = 0, options, x0, residuals = [res]); fromNewton = true, kwargs...)
         if !BK._continues(compute) || res <= tol
-            flag = BK._converged(res < tol, callback((; x = x0, fx, residual = res, step = 0, options, x0, residuals = [res]); fromNewton = true, kwargs...))
+            flag = BK._converged(res <= tol, callback((; x = x0, fx, residual = res, step = 0, options, x0, residuals = [res]); fromNewton = true, kwargs...))
             return NonLinearSolution(x0, prob, [res], flag, 0, 0)
         end
         residuals = [res]
@@ -463,7 +463,7 @@ module NonlinearSolveExt
         sol = solve_cache(fixed_slot(solver), corrector, corrector.alg, fixed_residual, fixed_jacobian, fixed_jvp, x0, ctx, options, call, nothing, normN, false)
         resend = normN(sol.resid)
         step = sol.stats.nsteps
-        flag = BK._converged(SciMLBase.successful_retcode(sol) & (resend < tol),
+        flag = BK._converged(SciMLBase.successful_retcode(sol) & (resend <= tol),
                callback((; x = sol.u, fx = sol.resid, residual = resend, step, options, x0, residuals); fromNewton = true, kwargs...))
         return NonLinearSolution(sol.u, prob, residuals, flag, step, sol.stats.nsolve)
     end
@@ -496,7 +496,7 @@ module NonlinearSolveExt
         compute = callback((; x = x_pred, res_f = palc_state(residual0), residual = res, step = 0, contparams, z0, z_pred, ds = state.ds, p = z_pred.p, residuals, options); fromNewton = false, kwargs...)
         if !BK._continues(compute) || res <= tol
             x, p = x_pred, z_pred.p
-            flag = BK._converged(res < tol, callback((; x, res_f = palc_state(residual0), residual = res, step = 0, contparams, z0, z_pred, ds = state.ds, p, residuals, options, closing = true); fromNewton = false, kwargs...))
+            flag = BK._converged(res <= tol, callback((; x, res_f = palc_state(residual0), residual = res, step = 0, contparams, z0, z_pred, ds = state.ds, p, residuals, options, closing = true); fromNewton = false, kwargs...))
             return NonLinearSolution(BorderedArray(BK._copy(x), p), prob, residuals, flag, 0, 0)
         end
         (; alg, jvp, matrix) = palc_setup(corrector, ctx)
@@ -505,7 +505,7 @@ module NonlinearSolveExt
         x, p = BK._copy(palc_state(sol.u)), palc_parameter(sol.u)
         resend = bnorm(sol.resid)
         step = sol.stats.nsteps
-        flag = BK._converged(SciMLBase.successful_retcode(sol) & (resend < tol),
+        flag = BK._converged(SciMLBase.successful_retcode(sol) & (resend <= tol),
                callback((; x, res_f = palc_state(sol.resid), residual = resend, step, contparams, z0, z_pred, ds = state.ds, p, residuals, options, closing = true); fromNewton = false, kwargs...))
         return NonLinearSolution(BorderedArray(x, p), prob, residuals, flag, step, sol.stats.nsolve)
     end
