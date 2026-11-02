@@ -26,7 +26,7 @@ Nonlinear solver of [NonlinearSolve.jl](https://docs.sciml.ai/NonlinearSolve/sta
 
 The bordered system `[F(x, p); N(x, p)] = 0` of PALC (`N` is the arclength constraint) is solved in the unknown `ArrayPartition(x, [p])`. Its Jacobian `[J ∂ₚF; ∇N]` is built from `jacobian(prob, x, p)`, `∂ₚF` from the jet of the problem (`R01`) and the exact `∇N`. When `J` is a matrix, its linear systems are solved by `bls`, which solves with `J` only. It is rebuilt when `alg` asks for it, which is what makes `jacobian_reuse` effective.
 
-One NonlinearSolve cache is built at the first corrector and `reinit!` at the next ones, which keeps its allocations; whether the Jacobian survives from one step to the next is `reuse_jacobian`. Use a new `NonlinearSolveCorrector` for a new problem.
+The NonlinearSolve caches are built when the continuation starts (they live in the `solver` of its state) and `reinit!` at each corrector, which keeps their allocations; whether the Jacobian survives from one step to the next is `reuse_jacobian`. A corrector without such a cache (`solve`, or a state whose types differ from the ones the caches were built for) builds a temporary one for each solve.
 
 # Matrix-free Jacobians
 
@@ -53,10 +53,6 @@ struct NonlinearSolveCorrector{Talg, Tpalc, Tkw <: NamedTuple} <: AbstractNonLin
     solve_kwargs::Tkw
     "carry the Jacobian from one corrector to the next (`reinit!(...; reuse_jacobian)`)"
     reuse_jacobian::Bool
-    "cache of the bordered problem of PALC, built at the first corrector; both caches are untyped because their type depends on the problem, and `solve_armed!` narrows each read"
-    palc_cache::Base.RefValue{Any}
-    "cache of the problem at fixed parameter (Natural, `solve`), built at the first corrector"
-    fixed_cache::Base.RefValue{Any}
 end
 
 function NonlinearSolveCorrector(alg::Any; bls = nothing, reuse_jacobian::Bool = false, solve_kwargs...)
@@ -66,13 +62,23 @@ function NonlinearSolveCorrector(alg::Any; bls = nothing, reuse_jacobian::Bool =
     if haskey(solve_kwargs, :termination_condition)
         throw(ArgumentError("`NonlinearSolveCorrector` stops on the `callback_newton` of `continuation` and the tolerance `tol` of `NewtonPar`; it takes no `termination_condition`."))
     end
-    return NonlinearSolveCorrector(alg, _palc_algorithm(alg, bls), NamedTuple(solve_kwargs), reuse_jacobian, Ref{Any}(nothing), Ref{Any}(nothing))
+    return NonlinearSolveCorrector(alg, _palc_algorithm(alg, bls), NamedTuple(solve_kwargs), reuse_jacobian)
 end
 
 # implemented in `ext/NonlinearSolveExt`
 function _newton_nonlinearsolve end
 function _newton_palc_nonlinearsolve end
 function _palc_algorithm end
+function _solver_caches end
+
+"""
+    solver_caches(alg, it, z0)
+
+The NonlinearSolve caches of the corrector of the continuation algorithm `alg` of the iterable `it`, for its state `ContState.solver`, or `nothing` when `alg` has no [`NonlinearSolveCorrector`](@ref). `z0` is the first point of the branch.
+"""
+solver_caches(::Any, ::AbstractContinuationIterable, ::Any) = nothing
+solver_caches(::Any, ::AbstractContinuationIterable, ::Any, ::Any) = nothing
+solver_caches(corrector::NonlinearSolveCorrector, it::AbstractContinuationIterable, z0::Any, palc::Any) = _solver_caches(corrector, it, z0, palc)
 
 """
     corrector_jacobian(context, u)
@@ -96,8 +102,8 @@ BifurcationKit's own Newton method as the corrector of [`PALC`](@ref) (`PALC(; c
 struct FreeParameterNewton end
 
 # the corrector of Natural: BifurcationKit's Newton or NonlinearSolve
-_corrector_newton(::Union{Nothing, FreeParameterNewton}, prob::AbstractBifurcationProblem, x0::Any, params0::Any, options::NewtonPar; kwargs...) = _newton(prob, x0, params0, options; kwargs...)
-_corrector_newton(corrector::NonlinearSolveCorrector, prob::AbstractBifurcationProblem, x0::Any, params0::Any, options::NewtonPar; kwargs...) = _newton_nonlinearsolve(corrector, prob, x0, params0, options; kwargs...)
+_corrector_newton(::Union{Nothing, FreeParameterNewton}, ::Any, prob::AbstractBifurcationProblem, x0::Any, params0::Any, options::NewtonPar; kwargs...) = _newton(prob, x0, params0, options; kwargs...)
+_corrector_newton(corrector::NonlinearSolveCorrector, solver::Any, prob::AbstractBifurcationProblem, x0::Any, params0::Any, options::NewtonPar; kwargs...) = _newton_nonlinearsolve(corrector, solver, prob, x0, params0, options; kwargs...)
 
 """
     _corrector_palc(corrector, iter, state, dotθ; kwargs...)
@@ -106,7 +112,7 @@ The corrector of a [`PALC`](@ref) step from the predictor `state.z_pred`. `nothi
 """
 _corrector_palc(::Nothing, iter::AbstractContinuationIterable, state::AbstractContinuationState, dotθ::Any; kwargs...) = newton_palc(iter, state, dotθ; kwargs...)
 _corrector_palc(::FreeParameterNewton, iter::AbstractContinuationIterable, state::AbstractContinuationState, dotθ::Any; kwargs...) = newton_palc(iter, state, dotθ; kwargs..., stop_at_bounds = false)
-_corrector_palc(corrector::NonlinearSolveCorrector, iter::AbstractContinuationIterable, state::AbstractContinuationState, dotθ::Any; kwargs...) = _newton_palc_nonlinearsolve(corrector, iter, state, dotθ; kwargs...)
+_corrector_palc(corrector::NonlinearSolveCorrector, iter::AbstractContinuationIterable, state::AbstractContinuationState, dotθ::Any; kwargs...) = _newton_palc_nonlinearsolve(corrector, state.solver, iter, state, dotθ; kwargs...)
 
 """
     _corrector_at_bound(corrector, iter, state; callback, kwargs...)
@@ -115,9 +121,9 @@ The corrector of a [`PALC`](@ref) step whose predictor lies beyond `p_min` or `p
 """
 function _corrector_at_bound(corrector, iter::AbstractContinuationIterable, state::AbstractContinuationState; callback, kwargs...)
     p = clamp_predp(state.z_pred.p, iter)
-    sol = _corrector_newton(corrector, iter.prob, state.z_pred.u, setparam(iter, p), iter.contparams.newton_options;
+    sol = _corrector_newton(corrector, state.solver, iter.prob, state.z_pred.u, setparam(iter, p), iter.contparams.newton_options;
                             normN = iter.normC, callback, kwargs...)
     return NonLinearSolution(BorderedArray(sol.u, p), sol.prob, sol.residuals, sol.converged, sol.itnewton, sol.itlineartot)
 end
 
-solve(prob::AbstractBifurcationProblem, corrector::NonlinearSolveCorrector, options::NewtonPar; kwargs...) = _newton_nonlinearsolve(corrector, prob, getu0(prob), getparams(prob), options; kwargs...)
+solve(prob::AbstractBifurcationProblem, corrector::NonlinearSolveCorrector, options::NewtonPar; kwargs...) = _newton_nonlinearsolve(corrector, nothing, prob, getu0(prob), getparams(prob), options; kwargs...)

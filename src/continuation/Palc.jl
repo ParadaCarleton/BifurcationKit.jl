@@ -150,6 +150,7 @@ end
 get_bordered_linsolver(alg::PALC) = alg.bls
 getdot(alg::PALC) = alg.dotθ
 getθ(alg::PALC) = alg.θ
+solver_caches(alg::PALC, it::AbstractContinuationIterable, z0::Any) = solver_caches(alg.corrector, it, z0, (alg.dotθ, oftype(getcontparams(it).ds, alg.θ)))
 "The `DotTheta` that orients a `Bordered` tangent without the determinant: `orientation_dot` for `PALC`, the dot product otherwise."
 get_orientation_dot(alg::PALC) = alg.orientation_dot
 get_orientation_dot(alg) = getdot(alg)

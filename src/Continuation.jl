@@ -157,7 +157,7 @@ $(TYPEDFIELDS)
 - `in_bisection(state)` whether the state is in bisection for locating special points.
 - `getparams(iter, state)` return the current parameter set.
 """
-Base.@kwdef mutable struct ContState{Tv, T, Teigvals, Teigvec, Tcb, Tcache} <: AbstractContinuationState{Tv}
+Base.@kwdef mutable struct ContState{Tv, T, Teigvals, Teigvec, Tcb, Tcache, Tsolver} <: AbstractContinuationState{Tv}
     "predictor, i.e. the initial guess for the next Newton correction."
     z_pred::Tv
     "tangent to the curve at the current solution."
@@ -185,6 +185,8 @@ Base.@kwdef mutable struct ContState{Tv, T, Teigvals, Teigvec, Tcb, Tcache} <: A
     next_tangent::Union{Nothing, Tv} = nothing
     "data of the continuation algorithm that persists across steps, for example a [`PALCCache`](@ref), or `nothing`."
     cache::Tcache = nothing
+    "the NonlinearSolve caches of a [`NonlinearSolveCorrector`](@ref), built when the continuation starts, or `nothing`."
+    solver::Tsolver = nothing
 
     # the following values encode the current, previous number of unstable (resp. imaginary) eigen values
     # it is initialized as -1 when unknown
@@ -206,7 +208,7 @@ Base.@kwdef mutable struct ContState{Tv, T, Teigvals, Teigvec, Tcb, Tcache} <: A
 end
 
 function EmptyContState(z::Tvec) where {Tvec} 
-    ContState{Union{Missing, Tvec}, Missing, Nothing, Nothing, Nothing, Nothing}(;z, τ = missing, z_pred = missing, z_old = missing)
+    ContState{Union{Missing, Tvec}, Missing, Nothing, Nothing, Nothing, Nothing, Nothing}(;z, τ = missing, z_pred = missing, z_old = missing)
 end
 
 function Base.copy(state::ContState)
@@ -224,6 +226,7 @@ function Base.copy(state::ContState)
         stepsizecontrol  = state.stepsizecontrol,
         next_tangent     = isnothing(state.next_tangent) ? nothing : _copy(state.next_tangent),
         cache            = state.cache,
+        solver           = state.solver,
         n_unstable          = state.n_unstable,
         n_imag              = state.n_imag,
         convergedEig        = state.convergedEig,
@@ -248,6 +251,7 @@ function Base.copyto!(dest::ContState, src::ContState)
         dest.stepsizecontrol  = src.stepsizecontrol
         dest.next_tangent     = isnothing(src.next_tangent) ? nothing : _copy(src.next_tangent)
         dest.cache            = src.cache
+        dest.solver           = src.solver
         dest.n_unstable       = src.n_unstable
         dest.n_imag           = src.n_imag
         dest.convergedEig     = src.convergedEig
@@ -465,6 +469,7 @@ function iterate_from_two_points(it::ContIterable,
                         eigvecs,
                         eventValue = (cbval, cbval),
                         cache = _continuation_cache(it.alg, z0, eltype(it)),
+                        solver = solver_caches(it.alg, it, z0),
                     )
 
     # initialize the state for the continuation algorithm, at this stage, the tangent is set up

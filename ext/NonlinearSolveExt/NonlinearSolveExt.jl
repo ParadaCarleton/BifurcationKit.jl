@@ -17,39 +17,46 @@ module NonlinearSolveExt
         return J
     end
 
-    # The Jacobian `J` (and `∂ₚF` for PALC) at the iterate `point`, built once per iterate however many products a matrix-free linear solver takes
-    struct IterateJacobian{Tu, TJ, Tdp}
+    """
+    The Jacobian `J` (and `∂ₚF` for PALC) at the iterate `point`, built once per iterate however many products a matrix-free linear solver takes. It is mutable because it is overwritten at each new iterate of a solve; a memo that is not `valid` holds the types of a first iterate and no iterate.
+    """
+    mutable struct JacobianMemo{Tu, TJ, Tdp}
         point::Tu
         J::TJ
         dFdp::Tdp
+        valid::Bool
     end
 
-    function remembered(slot::Base.RefValue{Any}, point)
-        known = slot[]
-        if !isnothing(known) && known.point == point
-            return known
-        end
-        return nothing
+    JacobianMemo(point, J, dFdp) = JacobianMemo(point, J, dFdp, true)
+
+    "A memo of the types of `memo` that holds no iterate yet, so that no Jacobian is built before NonlinearSolve asks for one."
+    stale_like(memo::JacobianMemo{Tu, TJ, Tdp}) where {Tu, TJ, Tdp} = JacobianMemo{Tu, TJ, Tdp}(memo.point, memo.J, memo.dFdp, false)
+
+    remembers(memo::JacobianMemo, point) = memo.valid && memo.point == point
+
+    function remember!(memo::JacobianMemo, point, J, dFdp)
+        memo.point, memo.J, memo.dFdp, memo.valid = BK._copy(point), J, dFdp, true
+        return memo
     end
 
     #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # Solves of `F(x, p0) = 0`. The parameter of the NonlinearProblem is a `FixedContext`.
-    struct FixedContext{Tprob, Tpar}
+    struct FixedContext{Tprob, Tpar, Tmemo}
         prob::Tprob
         par::Tpar
-        memo::Base.RefValue{Any}
+        memo::Tmemo
     end
 
-    FixedContext(prob, par) = FixedContext(prob, par, Ref{Any}(nothing))
+    # without a template context, the memo holds the Jacobian at the starting point `x0`; with one, only its types
+    fixed_memo(::Nothing, prob, par, x0) = JacobianMemo(BK._copy(x0), BK.jacobian(prob, x0, par), nothing)
+    fixed_memo(template::FixedContext, ::Any, ::Any, ::Any) = stale_like(template.memo)
+    fixed_context(prob, par, x0, template) = FixedContext(prob, par, fixed_memo(template, prob, par, x0))
 
     function iterate_jacobian!(ctx::FixedContext, x)
-        known = remembered(ctx.memo, x)
-        if !isnothing(known)
-            return known
+        if !remembers(ctx.memo, x)
+            remember!(ctx.memo, x, BK.jacobian(ctx.prob, x, ctx.par), nothing)
         end
-        jacobian = IterateJacobian(BK._copy(x), BK.jacobian(ctx.prob, x, ctx.par), nothing)
-        ctx.memo[] = jacobian
-        return jacobian
+        return ctx.memo
     end
 
     fixed_residual(x, ctx::FixedContext) = BK.residual(ctx.prob, x, ctx.par)
@@ -183,57 +190,63 @@ module NonlinearSolveExt
     end
 
     """
-    The part of the corrector's data which does not change during a PALC corrector, the NonlinearSolve parameter of its bordered problem. The solution `z0`, the tangent `τ0` and the step `ds` are read from `state`, the continuation parameter from `prob`.
+    The data of one PALC corrector, the NonlinearSolve parameter of its bordered problem: the solution `z0`, the tangent `τ0` and the step `ds` of the step, the dot product `dotθ` and weight `θ` of the arclength constraint. It holds no continuation state, so its type depends on the problem alone.
     """
-    struct PALCCache{Tprob, Tpar, Tstate, Tdot, Tθ, Trow, Tc}
+    struct PALCContext{Tprob, Tpar, Tz0, Tτ0, Tds, Tdot, Tθ, Trow, Tc, Tmemo}
         prob::Tprob
         par::Tpar
-        state::Tstate
+        z0::Tz0
+        τ0::Tτ0
+        ds::Tds
         dotθ::Tdot
         θ::Tθ
         "`θ A τu` for the weighted dot product `A` of `dotθ`, the row of the arclength constraint acting on `x`"
         row::Trow
         "`(1 - θ) τp`, the coefficient of `p` in the arclength constraint"
         c::Tc
-        "the `IterateJacobian` of the last iterate"
-        memo::Base.RefValue{Any}
-    end
-
-    function PALCCache(prob, par, state, dotθ, θ)
-        τ0 = state.τ
-        row = BK._copy(τ0.u) .* θ
-        applyξu! = BK._get_apply_dot(dotθ)
-        if !isnothing(applyξu!)
-            applyξu!(row)
-        end
-        return PALCCache(prob, par, state, dotθ, θ, row, (one(θ) - θ) * τ0.p, Ref{Any}(nothing))
-    end
-
-    function palc_residual(w::ArrayPartition, ctx::PALCCache)
-        x, p = palc_state(w), palc_parameter(w)
-        z0, τ0 = BK.getsolution(ctx.state), ctx.state.τ
-        Fx = BK.residual(ctx.prob, x, BK.set(ctx.par, BK.getlens(ctx.prob), p))
-        Nx = BK.arc_length_eq(ctx.dotθ, x, z0.u, p - z0.p, τ0.u, τ0.p, ctx.θ, ctx.state.ds)
-        return ArrayPartition(Fx, [Nx])
+        "the `JacobianMemo` of the last iterate"
+        memo::Tmemo
     end
 
     # `∂ₚF` from the jet of the problem (`R01` of `BifurcationProblem`, automatic differentiation by default); problems without a jet (minimally augmented, periodic orbits) by finite differences
     palc_dFdp(prob::BK.AbstractAllJetBifProblem, x, par) = BK.R01(prob, x, par)
     palc_dFdp(prob, x, par) = BK.R01(BK.FiniteDifferences(), prob, x, par)
 
-    function iterate_jacobian!(ctx::PALCCache, w::ArrayPartition)
-        known = remembered(ctx.memo, w)
-        if !isnothing(known)
-            return known
+    # without a template context, the memo holds the Jacobian at the predictor `w0`; with one, only its types
+    function palc_memo(::Nothing, prob, par, w0)
+        x, p = palc_state(w0), palc_parameter(w0)
+        par_p = BK.set(par, BK.getlens(prob), p)
+        return JacobianMemo(BK._copy(w0), BK.jacobian(prob, x, par_p), palc_dFdp(prob, x, par_p))
+    end
+    palc_memo(template::PALCContext, ::Any, ::Any, ::Any) = stale_like(template.memo)
+
+    function palc_context(prob, z0, τ0, ds, dotθ, θ, w0::ArrayPartition, template)
+        par = BK.getparams(prob)
+        row = BK._copy(τ0.u) .* θ
+        applyξu! = BK._get_apply_dot(dotθ)
+        if !isnothing(applyξu!)
+            applyξu!(row)
         end
-        x, p = palc_state(w), palc_parameter(w)
-        par = BK.set(ctx.par, BK.getlens(ctx.prob), p)
-        jacobian = IterateJacobian(BK._copy(w), BK.jacobian(ctx.prob, x, par), palc_dFdp(ctx.prob, x, par))
-        ctx.memo[] = jacobian
-        return jacobian
+        return PALCContext(prob, par, z0, τ0, ds, dotθ, θ, row, (one(θ) - θ) * τ0.p, palc_memo(template, prob, par, w0))
     end
 
-    function palc_jacobian(w::ArrayPartition, ctx::PALCCache)
+    function palc_residual(w::ArrayPartition, ctx::PALCContext)
+        x, p = palc_state(w), palc_parameter(w)
+        Fx = BK.residual(ctx.prob, x, BK.set(ctx.par, BK.getlens(ctx.prob), p))
+        Nx = BK.arc_length_eq(ctx.dotθ, x, ctx.z0.u, p - ctx.z0.p, ctx.τ0.u, ctx.τ0.p, ctx.θ, ctx.ds)
+        return ArrayPartition(Fx, [Nx])
+    end
+
+    function iterate_jacobian!(ctx::PALCContext, w::ArrayPartition)
+        if !remembers(ctx.memo, w)
+            x, p = palc_state(w), palc_parameter(w)
+            par = BK.set(ctx.par, BK.getlens(ctx.prob), p)
+            remember!(ctx.memo, w, BK.jacobian(ctx.prob, x, par), palc_dFdp(ctx.prob, x, par))
+        end
+        return ctx.memo
+    end
+
+    function palc_jacobian(w::ArrayPartition, ctx::PALCContext)
         (; J, dFdp) = iterate_jacobian!(ctx, w)
         return BorderedJacobian(check_matrix(J), dFdp, ctx.row, ctx.c)
     end
@@ -241,40 +254,24 @@ module NonlinearSolveExt
     # A matrix-free `J` (a function `dx -> J dx`) gives NonlinearSolve the product with `[J ∂ₚF; row' c]` at the iterate `w`, which NonlinearSolve binds to the iterate at every step:
     # each step is a Newton step, and `jacobian_reuse` keeps only the preconditioner, built by the `precs` of the iterative linear solver for the whole bordered system.
     # The iterative linear solver solves the whole bordered system: BorderedLinearSolve keeps its inner solver's cache for one operator, so each iterate would rebuild the preconditioner.
-    function palc_jvp(v::ArrayPartition, w::ArrayPartition, ctx::PALCCache)
+    function palc_jvp(v::ArrayPartition, w::ArrayPartition, ctx::PALCContext)
         (; J, dFdp) = iterate_jacobian!(ctx, w)
         vx, vp = palc_state(v), palc_parameter(v)
         return ArrayPartition(BK.apply(J, vx) .+ dFdp .* vp, [LA.dot(ctx.row, vx) + ctx.c * vp])
     end
 
-    BK.corrector_jacobian(ctx::PALCCache, w::ArrayPartition) = iterate_jacobian!(ctx, w).J
+    BK.corrector_jacobian(ctx::PALCContext, w::ArrayPartition) = iterate_jacobian!(ctx, w).J
 
-    function BK.corrector_matrix(ctx::PALCCache, w::ArrayPartition, state_matrix::AbstractMatrix)
+    function BK.corrector_matrix(ctx::PALCContext, w::ArrayPartition, state_matrix::AbstractMatrix)
         dFdp = iterate_jacobian!(ctx, w).dFdp
         return vcat(hcat(state_matrix, vec(dFdp)), hcat(LA.adjoint(vec(ctx.row)), ctx.c))
     end
 
     #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    """
-    The termination condition of the NonlinearSolve cache of a corrector: after each Newton step it shows the iterate to `call` (the `callback` of the continuation, as `newton` and `newton_palc` do at every step), and stops when `call` returns `true`. `call` is `nothing` between solves, when the condition never stops. `steps` counts the iterates shown since `call` was set.
-    """
-    mutable struct IterateStop{Tcall} <: NonlinearSolveBase.AbstractNonlinearTerminationMode
-        call::Union{Nothing, Tcall}
-        steps::Int
-    end
-
-    function NonlinearSolveBase.check_convergence(stop::IterateStop, residual, state, ::Any, abstol, ::Any)::Bool
-        if isnothing(stop.call)
-            return false
-        end
-        stop.steps += 1
-        return stop.call(state, residual, stop.steps, abstol)
-    end
-
     "Whether the callback verdict `verdict` or a residual `res` within `tol` ends Newton's method, as in `newton_palc`."
     ends_newton(verdict, res, tol) = !BK._continues(verdict) || res <= tol
 
-    "The call of an `IterateStop` for the bordered problem of PALC: the callback of `newton_palc` at an iterate."
+    "The call of the step loop for the bordered problem of PALC: the callback of `newton_palc` at an iterate."
     struct PALCIterate{Tcallback, Tkw, Tnorm, Tz0, Tzp, Tds, Tcp, Topt, Tres}
         callback::Tcallback
         kwargs::Tkw
@@ -296,7 +293,7 @@ module NonlinearSolveExt
         return ends_newton(verdict, res, tol)
     end
 
-    "The call of an `IterateStop` for a Newton solve at a fixed parameter: the callback of `newton` at an iterate."
+    "The call of the step loop for a Newton solve at a fixed parameter: the callback of `newton` at an iterate."
     struct FixedIterate{Tcallback, Tkw, Tnorm, Tx0, Topt, Tres}
         callback::Tcallback
         kwargs::Tkw
@@ -314,12 +311,34 @@ module NonlinearSolveExt
     end
 
     #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # One NonlinearSolve cache is kept by the corrector between solves, rebuilt when the tolerance, the number of iterations or the size of the system change.
-    struct CacheKey{T, Tb, Tcall}
-        tol::T
-        max_iterations::Int
-        length::Int
-        bounds::Tb
+    """
+    A NonlinearSolve cache with the types of the unknown and the context it was built for (`proto`, whose memo gives the types of the memos of later contexts), the options (`key`) and the Jacobian kind (`matrix`). A solve with other types, tolerance, number of iterations, bounds or norm builds a temporary cache instead.
+    """
+    struct SolverCache{Tcache, Tkey, Tu, Tctx}
+        cache::Tcache
+        key::Tkey
+        proto::Tctx
+        matrix::Bool
+    end
+
+    "The caches of a continuation, in its state: the bordered problem of PALC and the problem at fixed parameter, each `nothing` when the continuation has no such solve."
+    struct NonlinearSolveCaches{Tpalc, Tfixed}
+        palc::Tpalc
+        fixed::Tfixed
+    end
+
+    solver_key(options::NewtonPar, u0, bounds, norm) = (; tol = options.tol, max_iterations = options.max_iterations, length = length(u0), bounds, norm)
+
+    template_context(::Nothing) = nothing
+    template_context(slot::SolverCache) = slot.proto
+    palc_slot(::Nothing) = nothing
+    palc_slot(solver::NonlinearSolveCaches) = solver.palc
+    fixed_slot(::Nothing) = nothing
+    fixed_slot(solver::NonlinearSolveCaches) = solver.fixed
+
+    fits(::Nothing, u0, ctx, key, matrix::Bool) = false
+    function fits(slot::SolverCache{Tcache, Tkey, Tu, Tctx}, u0, ctx, key, matrix::Bool) where {Tcache, Tkey, Tu, Tctx}
+        return u0 isa Tu && ctx isa Tctx && slot.matrix == matrix && slot.key == key
     end
 
     # `p ∈ [p_min, p_max]` as the box of the parameter of PALC's unknown, for an algorithm that handles bounds
@@ -334,57 +353,96 @@ module NonlinearSolveExt
     end
 
     # `matrix`: the Jacobian is the operator `jacobian(u0, ctx)`, given as `jac_prototype`; otherwise NonlinearSolve takes `jacobian` for a dense linear solver and builds its own operator from `jvp` for an iterative one
-    function solve_cache!(slot::Base.RefValue{Any}, corrector::NonlinearSolveCorrector, alg, residual, jacobian, jvp, u0, ctx, options::NewtonPar, call, bounds, matrix::Bool)
-        key = CacheKey{typeof(options.tol), typeof(bounds), typeof(call)}(options.tol, options.max_iterations, length(u0), bounds)
-        if !isnothing(slot[]) && slot[].key == key
-            cache = slot[].cache
-            # only passed when asked, so a NonlinearSolve without the keyword works with the default
-            if corrector.reuse_jacobian
-                SciMLBase.reinit!(cache, u0; p = ctx, reuse_jacobian = true)
-            else
-                SciMLBase.reinit!(cache, u0; p = ctx)
-            end
+    function build_solver_cache(corrector::NonlinearSolveCorrector, alg, residual, jacobian, jvp, u0, ctx, options::NewtonPar, bounds, norm, matrix::Bool)
+        if matrix
+            f = SciMLBase.NonlinearFunction{false}(residual; jac = jacobian, jac_prototype = jacobian(u0, ctx))
         else
-            if matrix
-                f = SciMLBase.NonlinearFunction{false}(residual; jac = jacobian, jac_prototype = jacobian(u0, ctx))
-            else
-                f = SciMLBase.NonlinearFunction{false}(residual; jac = jacobian, jvp)
+            f = SciMLBase.NonlinearFunction{false}(residual; jac = jacobian, jvp)
+        end
+        problem = SciMLBase.NonlinearProblem(f, u0, ctx; something(bounds, (;))...)
+        cache = SciMLBase.init(problem, alg;
+            abstol = options.tol,
+            reltol = zero(options.tol),
+            maxiters = options.max_iterations,
+            termination_condition = NonlinearSolveBase.AbsNormTerminationMode(norm),
+            corrector.solve_kwargs...)
+        key = solver_key(options, u0, bounds, norm)
+        return SolverCache{typeof(cache), typeof(key), typeof(u0), typeof(ctx)}(cache, key, ctx, matrix)
+    end
+
+    "Solve from `u0` in the context `ctx` with the cache of `slot`, started again from `u0` (it may check the initial iterate)."
+    function run_solver!(slot::SolverCache, corrector::NonlinearSolveCorrector, u0, ctx, call, tol)
+        # only passed when asked, so a NonlinearSolve without the keyword works with the default
+        if corrector.reuse_jacobian
+            SciMLBase.reinit!(slot.cache, u0; p = ctx, reuse_jacobian = true)
+        else
+            SciMLBase.reinit!(slot.cache, u0; p = ctx)
+        end
+        return solve_steps!(slot.cache, call, tol)
+    end
+
+    # the cache of `slot` when it fits, a temporary cache otherwise; two branches so that each is type stable
+    function solve_cache(slot, corrector::NonlinearSolveCorrector, alg, residual, jacobian, jvp, u0, ctx, options::NewtonPar, call, bounds, norm, matrix::Bool)
+        if fits(slot, u0, ctx, solver_key(options, u0, bounds, norm), matrix)
+            return run_solver!(slot, corrector, u0, ctx, call, options.tol)
+        end
+        temporary = build_solver_cache(corrector, alg, residual, jacobian, jvp, u0, ctx, options, bounds, norm, matrix)
+        return run_solver!(temporary, corrector, u0, ctx, call, options.tol)
+    end
+
+    """
+    Step `cache` until it terminates or `call` ends Newton's method, showing `call` each iterate once, then finish as `solve!` does.
+    """
+    function solve_steps!(cache, call, tol)
+        step = 0
+        while NonlinearSolveBase.not_terminated(cache)
+            SciMLBase.step!(cache)
+            step += 1
+            if call(NonlinearSolveBase.get_u(cache), NonlinearSolveBase.get_fu(cache), step, tol)
+                cache.retcode = SciMLBase.ReturnCode.Success
+                cache.force_stop = true
             end
-            problem = SciMLBase.NonlinearProblem(f, u0, ctx; something(bounds, (;))...)
-            stop = IterateStop{typeof(call)}(nothing, 0)
-            cache = SciMLBase.init(problem, alg;
-                abstol = options.tol,
-                reltol = zero(options.tol),
-                maxiters = options.max_iterations,
-                termination_condition = stop,
-                corrector.solve_kwargs...)
-            slot[] = (; key, cache, matrix, stop)
         end
-        return solve_armed!(cache, slot[].stop, call)
+        # a terminated cache only gets its return code, residual and solution assembled
+        return SciMLBase.solve!(cache)
     end
 
-    """
-    Solve the cache with `stop` armed with `call`, after `reinit!`, which may check the initial iterate.
-    The slot is untyped; this call is where `stop` and `call` get concrete types.
-    """
-    function solve_armed!(cache, stop::IterateStop{Tcall}, call::Tcall) where {Tcall}
-        stop.call = call
-        stop.steps = 0
-        solution = SciMLBase.solve!(cache)
-        stop.call = nothing
-        return solution
+    # PALC borders a matrix Jacobian with BorderedLinearSolve; a matrix-free one goes to the algorithm as is
+    function palc_setup(corrector::NonlinearSolveCorrector, ctx::PALCContext)
+        if ctx.memo.J isa AbstractMatrix
+            return (; alg = check_palc_algorithm(corrector), jvp = nothing, matrix = true)
+        end
+        return (; alg = corrector.alg, jvp = palc_jvp, matrix = false)
     end
 
-    # whether the Jacobian of the problem is a matrix, which PALC borders with BorderedLinearSolve; read once, at the first corrector
-    function matrix_jacobian(slot::Base.RefValue{Any}, w0::ArrayPartition, ctx::PALCCache)
-        if isnothing(slot[])
-            return BK.corrector_jacobian(ctx, w0) isa AbstractMatrix
+    #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # The caches are built at the first point of the branch, with the types of the solves of the continuation.
+    function BK._solver_caches(corrector::NonlinearSolveCorrector, it::BK.AbstractContinuationIterable, z0, palc)
+        x0 = BK._copy(z0.u)
+        if !(x0 isa AbstractArray)
+            return nothing
         end
-        return slot[].matrix
+        prob, options = it.prob, BK.getcontparams(it).newton_options
+        fixed_ctx = fixed_context(prob, BK.getparams(prob), x0, nothing)
+        fixed = build_solver_cache(corrector, corrector.alg, fixed_residual, fixed_jacobian, fixed_jvp, x0, fixed_ctx, options, nothing, it.normC, false)
+        return NonlinearSolveCaches(palc_solver_cache(corrector, it, z0, x0, palc), fixed)
+    end
+
+    palc_solver_cache(::NonlinearSolveCorrector, ::Any, ::Any, ::Any, ::Nothing) = nothing
+    function palc_solver_cache(corrector::NonlinearSolveCorrector, it, z0, x0, palc::Tuple)
+        dotθ, θ = palc
+        contparams = BK.getcontparams(it)
+        w0 = ArrayPartition(BK._copy(x0), [z0.p])
+        # the solution stands in for the tangent: a nonzero arclength row keeps a preconditioner built from this context nonsingular
+        ctx = palc_context(it.prob, z0, BK._copy(z0), contparams.ds, dotθ, θ, w0, nothing)
+        (; alg, jvp, matrix) = palc_setup(corrector, ctx)
+        bounds = palc_bounds(alg, w0, contparams.p_min, contparams.p_max)
+        return build_solver_cache(corrector, alg, palc_residual, palc_jacobian, jvp, w0, ctx, contparams.newton_options, bounds, BorderedNorm(it.normC), matrix)
     end
 
     #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     function BK._newton_nonlinearsolve(corrector::NonlinearSolveCorrector,
+                                       solver::Union{Nothing, NonlinearSolveCaches},
                                        prob::BK.AbstractBifurcationProblem,
                                        x0, params0, options::NewtonPar;
                                        normN = LA.norm,
@@ -392,7 +450,7 @@ module NonlinearSolveExt
                                        kwargs...)
         (; tol) = options
         x0 = BK._copy(x0)
-        ctx = FixedContext(prob, params0)
+        ctx = fixed_context(prob, params0, x0, template_context(fixed_slot(solver)))
         fx = BK.residual(prob, x0, params0)
         res = normN(fx)
         compute = callback((; x = x0, fx, J = nothing, residual = res, step = 0, options, x0, residuals = [res]); fromNewton = true, kwargs...)
@@ -402,7 +460,7 @@ module NonlinearSolveExt
         end
         residuals = [res]
         call = FixedIterate(callback, NamedTuple(kwargs), normN, x0, options, residuals)
-        sol = solve_cache!(corrector.fixed_cache, corrector, corrector.alg, fixed_residual, fixed_jacobian, fixed_jvp, x0, ctx, options, call, nothing, false)
+        sol = solve_cache(fixed_slot(solver), corrector, corrector.alg, fixed_residual, fixed_jacobian, fixed_jvp, x0, ctx, options, call, nothing, normN, false)
         resend = normN(sol.resid)
         step = sol.stats.nsteps
         flag = BK._converged(SciMLBase.successful_retcode(sol) & (resend < tol),
@@ -411,6 +469,7 @@ module NonlinearSolveExt
     end
 
     function BK._newton_palc_nonlinearsolve(corrector::NonlinearSolveCorrector,
+                                            solver::Union{Nothing, NonlinearSolveCaches},
                                             iter::BK.AbstractContinuationIterable,
                                             state::BK.AbstractContinuationState,
                                             dotθ = BK.getdot(iter);
@@ -427,8 +486,8 @@ module NonlinearSolveExt
             throw(ArgumentError("`NonlinearSolveCorrector` needs the state to be an `AbstractArray`, got $(typeof(x_pred))."))
         end
 
-        ctx = PALCCache(prob, BK.getparams(prob), state, dotθ, BK.getθ(iter))
         w0 = ArrayPartition(BK._copy(x_pred), [z_pred.p])
+        ctx = palc_context(prob, z0, state.τ, state.ds, dotθ, BK.getθ(iter), w0, template_context(palc_slot(solver)))
         bnorm = BorderedNorm(normN)
         residual0 = palc_residual(w0, ctx)
         res = bnorm(residual0)
@@ -440,14 +499,9 @@ module NonlinearSolveExt
             flag = BK._converged(res < tol, callback((; x, res_f = palc_state(residual0), residual = res, step = 0, contparams, z0, z_pred, ds = state.ds, p, residuals, options, closing = true); fromNewton = false, kwargs...))
             return NonLinearSolution(BorderedArray(BK._copy(x), p), prob, residuals, flag, 0, 0)
         end
-        matrix = matrix_jacobian(corrector.palc_cache, w0, ctx)
-        if matrix
-            alg, jvp = check_palc_algorithm(corrector), nothing
-        else
-            alg, jvp = corrector.alg, palc_jvp
-        end
+        (; alg, jvp, matrix) = palc_setup(corrector, ctx)
         call = PALCIterate(callback, NamedTuple(kwargs), bnorm, z0, z_pred, state.ds, contparams, options, residuals)
-        sol = solve_cache!(corrector.palc_cache, corrector, alg, palc_residual, palc_jacobian, jvp, w0, ctx, contparams.newton_options, call, palc_bounds(alg, w0, p_min, p_max), matrix)
+        sol = solve_cache(palc_slot(solver), corrector, alg, palc_residual, palc_jacobian, jvp, w0, ctx, contparams.newton_options, call, palc_bounds(alg, w0, p_min, p_max), bnorm, matrix)
         x, p = BK._copy(palc_state(sol.u)), palc_parameter(sol.u)
         resend = bnorm(sol.resid)
         step = sol.stats.nsteps
