@@ -256,6 +256,17 @@ end
         @test norm(F_bratu(br.sol[end].x, (λ = br.sol[end].p,)), Inf) < 1.0e-8
     end
 
+    @testset "a predictor at an exact root converges at tol = 0, as BifurcationKit's own Newton method" begin
+        # every point (0, p) is a root, so each predictor along the tangent (0, 1) has residual exactly 0
+        prob_flat = BifurcationProblem((x, p) -> x .* (1 + p.a^2), [0.0], (a = 0.0,), (@optic _.a))
+        opts = ContinuationPar(p_min = -1.0, p_max = 1.0, ds = 0.1, dsmax = 0.2, max_steps = 100, newton_options = NewtonPar(tol = 0.0))
+        br_own = continuation(prob_flat, PALC(), opts)
+        br = continuation(prob_flat, PALC(; corrector = NonlinearSolveCorrector(exact)), opts)
+        @test br_own.branch.param[end] == 1.0
+        @test br.branch.param[end] == 1.0
+        @test length(br.sol) == length(br_own.sol)
+    end
+
     @testset "a corrector converging past p_max from an interior predictor is corrected at p_max" begin
         # below the centre of the circle x² + a² = 1, the corrector raises `a` beyond its predictor: from a = -1/2, a predictor short of
         # p_max = -0.148 converges past it (the tangent has norm 1 for the dot product with θ = 1/2, so the predictor moves `ds √2`)
