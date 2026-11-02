@@ -562,8 +562,10 @@ for (op, at, kd) in (
             ## Optional argument
             - `R01` correspond to the computation of dₚF. Can be `AutoDiff(), FiniteDifferences()` or a function `dpF(x, par)`. The correctors and tangents of continuation (`PALC`, `MoorePenrose`, `Bordered`) use a passed function and finite differences otherwise.
             - `FJ` function `FJ(x, p)` returning `(F(x, p), J(x, p))` from one evaluation. Newton's method in `PALC` calls it in place of `F` and `J`.
+
+            A literal `inplace` keyword gives a concretely typed problem: the constructor propagates constants so the vector field's type is known at compile time.
             """
-            function $op(_F, u0, parms, lens = (@optic _);
+            Base.@constprop :aggressive function $op(_F, u0, parms, lens = (@optic _);
                          jvp = nothing,
                          vjp = nothing,
                          J = nothing,
