@@ -370,10 +370,20 @@ module NonlinearSolveExt
         return SolverCache{typeof(cache), typeof(key), typeof(u0), typeof(ctx)}(cache, key, ctx, matrix)
     end
 
+    """
+    Whether `ctx` starts at the point where the last solve of `cache` ended: the step was accepted, so its Jacobian is one step old.
+    A rejected or failed step ended elsewhere (the retry starts at the older point with a smaller step), and a fixed-parameter solve has no previous step.
+    """
+    continues_accepted_step(cache, ctx::PALCContext) = begin
+        endpoint = NonlinearSolveBase.get_u(cache)
+        palc_state(endpoint) == ctx.z0.u && palc_parameter(endpoint) == ctx.z0.p
+    end
+    continues_accepted_step(cache, ctx) = false
+
     "Solve from `u0` in the context `ctx` with the cache of `slot`, started again from `u0` (it may check the initial iterate)."
     function run_solver!(slot::SolverCache, corrector::NonlinearSolveCorrector, u0, ctx, call, tol)
         # only passed when asked, so a NonlinearSolve without the keyword works with the default
-        if corrector.reuse_jacobian
+        if corrector.reuse_jacobian && continues_accepted_step(slot.cache, ctx)
             SciMLBase.reinit!(slot.cache, u0; p = ctx, reuse_jacobian = true)
         else
             SciMLBase.reinit!(slot.cache, u0; p = ctx)
