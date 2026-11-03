@@ -216,6 +216,24 @@ end
             maximum(point -> point.p, br_reference.sol) atol = 0.02
     end
 
+    @testset "a Jacobian carried over rejected steps stays on the branch" begin
+        # a step as long as the branch curvature allows fails often, and each retry must start from a fresh Jacobian
+        alg = NewtonRaphson(;
+            linsolve = LUFactorization(),
+            jacobian_reuse = JacobianReuse(max_age = 50),
+        )
+        wide = ContinuationPar(opts_bratu; ds = 0.4, dsmax = 0.8)
+        br = continuation(
+            prob_bratu,
+            PALC(; corrector = NonlinearSolveCorrector(alg; reuse_jacobian = true)),
+            wide,
+        )
+        @test all(point -> norm(F_bratu(point.x, (λ = point.p,)), Inf) < 1.0e-8, br.sol)
+        @test any(diff(br.branch.param) .< 0)
+        @test maximum(point -> point.p, br.sol) ≈
+            maximum(point -> point.p, br_reference.sol) atol = 0.02
+    end
+
     @testset "Newton solve" begin
         prob = re_make(prob_bratu; params = (λ = 1.0,), u0 = fill(0.1, 20))
         sol0 = BK.solve(prob, Newton(), NewtonPar(tol = 1.0e-12))
