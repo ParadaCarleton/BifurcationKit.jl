@@ -180,6 +180,16 @@ module BifurcationKit
     # iterators for continuation
     export ContIterable, iterate, ContState, getsolution, getx, getp, getpreviousx, getpreviousp, gettangent, getpredictor, get_previous_solution
 
+    # abstract types to subtype or dispatch on when extending continuation
+    export AbstractBifurcationProblem, AbstractContinuationAlgorithm, AbstractContinuationIterable, AbstractContinuationState
+    export AbstractLinearSolver, AbstractBorderedLinearSolver, AbstractTangentComputation
+
+    # PALC's dot product, point-weighted dot products, and a two-point start for a continuation iterator
+    export DotTheta, PointWeightedDot, reweight!, iterate_from_two_points
+
+    # a `callback_newton` result that ends Newton converged, and the hook a bordered linear solver implements for `orientation_check`
+    export NewtonConverged, bordered_tangent_and_sign
+
     # codim2 Fold continuation
     export foldpoint, FoldLinearSolverMinAug
 
