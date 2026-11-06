@@ -353,7 +353,7 @@ function (check::PALCStepCheck)(newton_state; kwargs...)
     verdict = check.callback(newton_state; kwargs...)
     # the test runs on every point the corrector accepts by its convergence tests or a zero Newton update;
     # a NaN residual has not converged, so its tangent is never computed
-    if !_converged(newton_state.converged | get(newton_state, :unmoved, false), verdict)
+    if !_converged(get(newton_state, :converged, false) | get(newton_state, :unmoved, false), verdict)
         return verdict
     end
     if ~_turns_forward!(check, BorderedArray(newton_state.x, p))
