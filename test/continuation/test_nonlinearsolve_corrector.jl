@@ -560,7 +560,7 @@ end
         par_com = (q1 = 2.5, q2 = 2.0, q3 = 10.0, q4 = 0.0675, q5 = 1.0, q6 = 0.1, k = 0.4)
         prob_com = BifurcationProblem(COm, [0.07, 0.2, 5.0], par_com, (@optic _.q2))
         opts_com = ContinuationPar(p_min = 0.6, p_max = 2.5, ds = 0.002, dsmax = 0.01, n_inversion = 4, detect_bifurcation = 3, max_bisection_steps = 25, nev = 2, max_steps = 20000)
-        br_com = continuation(prob_com, PALC(), opts_com; normC = norminf, bothside = true)
+        br_com = continuation(prob_com, PALC(), opts_com; normC = norminf, bothside = Val(true))
         @test br_com.specialpoint[2].type == :hopf
 
         alg = PALC(; corrector = NonlinearSolveCorrector(exact))
