@@ -360,6 +360,11 @@ module NonlinearSolveExt
         return (; lb, ub)
     end
 
+    """
+    The tolerances of the linear solver of `alg`: NonlinearSolve passes it its own `abstol` and `reltol`, which are zero so that the iterations end at the convergence tests of `NewtonPar`. A Krylov solver with zero tolerances does not stop, so it gets the absolute tolerance `tol` of the residual when it is finite, and the relative tolerance `√eps` otherwise.
+    """
+    linear_tolerances(tol::Real) = isfinite(tol) ? (; abstol = tol, reltol = zero(tol)) : (; abstol = zero(tol), reltol = sqrt(eps(float(typeof(tol)))))
+
     # `matrix`: the Jacobian is the operator `jacobian(u0, ctx)`, given as `jac_prototype`; otherwise NonlinearSolve takes `jacobian` for a dense linear solver and builds its own operator from `jvp` for an iterative one
     function build_solver_cache(corrector::NonlinearSolveCorrector, alg, residual, jacobian, jvp, u0, ctx, options::NewtonPar, bounds, norm, matrix::Bool)
         if matrix
@@ -374,7 +379,8 @@ module NonlinearSolveExt
             reltol = zero(options.tol),
             maxiters = options.max_iterations,
             termination_condition = NonlinearSolveBase.AbsNormTerminationMode(norm),
-            corrector.solve_kwargs...)
+            corrector.solve_kwargs...,
+            linsolve_kwargs = merge(linear_tolerances(options.tol), get(corrector.solve_kwargs, :linsolve_kwargs, (;))))
         key = solver_key(options, u0, bounds, norm)
         return SolverCache{typeof(cache), typeof(key), typeof(u0), typeof(ctx)}(cache, key, ctx, matrix)
     end
