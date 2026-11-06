@@ -89,12 +89,15 @@ function _newton(prob::AbstractBifurcationProblem, x0, params0, options::NewtonP
 
     # invoke callback before algo really starts
     compute = callback((; x, fx, J = nothing, residual = res, step, options, x0, residuals); fromNewton = true, kwargs...)
+    # whether the last Newton update was exactly zero: every further step would repeat the same iterate
+    unmoved = false
 
-    while (step < max_iterations) && (res > tol) && _continues(compute)
+    while (step < max_iterations) && (res > tol) && ~unmoved && _continues(compute)
         J = jacobian(prob, x, params0)
         u, cv, itlinear = options.linsolver(J, fx)
         ~cv && @debug "Linear solver for J did not converge."
         itlineartot += sum(itlinear)
+        unmoved = cv && iszero(normN(u))
 
         # x = x - J \ fx
         minus!!(x, u) # we use this form instead of just `x .= x .- u` to deal
@@ -110,7 +113,7 @@ function _newton(prob::AbstractBifurcationProblem, x0, params0, options::NewtonP
 
         compute = callback((;x, fx, J, residual = res, step, itlinear, options, x0, residuals); fromNewton = true, kwargs...)
     end
-    flag = _converged(residuals[end] <= tol, callback((;x, fx, residual = res, step, options, x0, residuals); fromNewton = true, kwargs...))
+    flag = _converged((residuals[end] <= tol) | unmoved, callback((;x, fx, residual = res, step, options, x0, residuals, unmoved); fromNewton = true, kwargs...))
     (~flag && verbose) && @error("\n──> Newton algorithm failed to converge, residual = $(residuals[end])")
     verbose && print_nonlinear_step(0, res, 0, true) # display last line of the table
     return NonLinearSolution(x, prob, residuals, flag, step, itlineartot)
@@ -140,7 +143,7 @@ This is the Newton-Krylov Solver for `F(x, p0) = 0` with Jacobian w.r.t. `x` wri
     
     They can be used as `callback = (state;k...) -> state.residual<1` for example.
 
-    The callback returns `true` to go on, `false` to stop, not converged, or [`NewtonConverged()`](@ref NewtonConverged) to stop, converged, whatever `options.tol`. The value of the call after the last iteration decides convergence: `true` leaves it to `residual < options.tol`, `false` refuses it and `NewtonConverged()` accepts the last iterate.
+    The callback returns `true` to go on, `false` to stop, not converged, or [`NewtonConverged()`](@ref NewtonConverged) to stop, converged, whatever `options.tol`. The value of the call after the last iteration decides convergence: `true` leaves it to `residual <= options.tol` or a Newton update of exactly zero, `false` refuses it and `NewtonConverged()` accepts the last iterate.
 - `kwargs` arguments passed to the callback. Useful when `newton` is called from `continuation`
 
 # Output:

@@ -96,6 +96,55 @@ let
     @test br.param[end] < 1
     @test endpoint(br).status == :guess
 end
+# a failed step with a NaN ds stops continuation
+let
+    opts = ContinuationPar(ds = 0.05, dsmin = 1e-3, dsmax = 0.1, p_min = 0., p_max = 2., max_steps = 400, detect_bifurcation = 0)
+    prob = BK.BifurcationProblem((u, p) -> u .- p.λ, [0.], (λ = 0.,), (@optic _.λ))
+    iter = ContIterable(prob, PALC(), opts)
+    state = iterate(iter)[2]
+    state.ds = NaN
+    state.converged = false
+    BK._step_size_control!(state, opts, 0)
+    @test state.stopcontinuation
+end
+# a Newton update of exactly zero ends the solve, converged, when its linear solve converged
+struct ZeroSolve <: BK.AbstractLinearSolver
+    converged::Bool
+end
+(solve::ZeroSolve)(J, rhs; kwargs...) = (zero(rhs), solve.converged, 1)
+struct ZeroBLS <: BK.AbstractBorderedLinearSolver
+    converged::Bool
+end
+(solve::ZeroBLS)(J, dR, dzu, dzp, R, n, ξu, ξp; kwargs...) = (zero(R), zero(n), solve.converged, 1)
+let
+    prob = BK.BifurcationProblem((u, p) -> u .- p.λ, [0.], (λ = 1.,), (@optic _.λ))
+    for converged in (true, false)
+        sol = BK.solve(prob, Newton(), NewtonPar(tol = 1e-12, max_iterations = 10, linsolver = ZeroSolve(converged)))
+        @test BK.converged(sol) == converged
+        @test length(sol.residuals) == ifelse(converged, 2, 11)
+    end
+    opts = ContinuationPar(ds = 0.05, dsmin = 1e-3, dsmax = 0.1, p_min = 0., p_max = 2., max_steps = 10, detect_bifurcation = 0, newton_options = NewtonPar(tol = 1e-12, max_iterations = 10))
+    for converged in (true, false)
+        iter = ContIterable(BK.re_make(prob; params = (λ = 0.,)), PALC(bls = ZeroBLS(converged)), opts)
+        state = iterate(iter)[2]
+        state.z_pred = BorderedArray([0.5], 0.1)
+        sol = BK.newton_palc(iter, state)
+        @test BK.converged(sol) == converged
+        @test sol.u.u == [0.5]
+    end
+    # a step that ends on a zero update still meets orientation_check: a predictor behind the current point is refused
+    for (z_pred, forward) in ((BorderedArray([0.75], 0.7), true), (BorderedArray([0.35], 0.3), false))
+        alg = PALC(bls = ZeroBLS(true), orientation_check = true)
+        iter = ContIterable(BK.re_make(prob; params = (λ = 0.,)), alg, opts)
+        state = iterate(iter)[1]
+        state.z = BorderedArray([0.5], 0.5)
+        state.τ = BorderedArray([sqrt(0.5)], sqrt(0.5))
+        state.cache = BK._update(state.cache; orientation = 1)
+        state.z_pred = z_pred
+        BK.corrector!(state, iter, alg)
+        @test BK.converged(state) == forward
+    end
+end
 ####################################################################################################
 # test continuation algorithm
 let

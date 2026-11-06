@@ -34,6 +34,10 @@ let
     # the deceleration is the largest one asked for by any step
     @test after_second.deceleration ≈ max(1.1 * sqrt(0.3 / 0.4), 1.1 * sqrt(contraction / 0.6))
     @test after_second.steps == 2
+    # two zero-length steps with tol = 0: rate 0, not NaN
+    unmoved = BK.observe(control, quality, 0.0, 0.0)
+    @test BK.contraction_rate(control, unmoved, 0.0, 0.0) == 0
+    @test BK.growth_factor(control, BK.observe(control, unmoved, 0.0, 0.0)) ≈ 1.1
 
     # rejects_contraction = false keeps the distance test and the contraction's deceleration, but no contraction rejects
     lenient = CorrectorQuality(max_distance = 0.4, rejects_contraction = false)
