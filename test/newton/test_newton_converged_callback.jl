@@ -53,6 +53,10 @@ let
     # a test which never passes never converges
     @test ~BK.converged(BK.solve(prob, Newton(), NewtonPar(tol = Inf, max_iterations = 5, convergence_test = FromStep(6))))
 
+    # a NaN residual stops the iterations, unconverged, whatever the tests
+    nan = BK.solve(BifurcationProblem((x, p) -> x .* NaN, [1.0], (r = 0.5,), (@optic _.r)), Newton(), NewtonPar(tol = Inf))
+    @test ~BK.converged(nan) && nan.itnewton == 0
+
     # `false` at the last call of the callback refuses a converged point
     @test ~BK.converged(BK.solve(prob, Newton(), opts; callback = (state; k...) -> state.step == 0))
     @test BK._converged(true, true) && ~BK._converged(false, true) && ~BK._converged(true, false)

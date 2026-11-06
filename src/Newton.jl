@@ -111,7 +111,8 @@ function _newton(prob::AbstractBifurcationProblem, x0, params0, options::NewtonP
     # invoke callback before algo really starts
     compute, done = _verdicts(callback, options, (; x, fx, J = nothing, residual = res, step, options, x0, residuals); fromNewton = true, kwargs...)
 
-    while (step < max_iterations) && ~done && _continues(compute)
+    # a NaN residual stops the iterations, unconverged
+    while (step < max_iterations) && ~done && ~isnan(res) && _continues(compute)
         J = jacobian(prob, x, params0)
         u, cv, itlinear = options.linsolver(J, fx)
         ~cv && @debug "Linear solver for J did not converge."

@@ -229,7 +229,8 @@ function newton_palc(iter::AbstractContinuationIterable,
 
     compute, done = _verdicts(callback, contparams.newton_options, (;x, res_f, residual = res, step, contparams, z0, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...)
 
-    while (step < max_iterations) && ~done && line_step && _continues(compute)
+    # a NaN residual stops the iterations, unconverged
+    while (step < max_iterations) && ~done && ~isnan(res) && line_step && _continues(compute)
         R01!(FiniteDifferences(), prob, dFdp, x, par, p, res_f)
         J = jacobian(prob, x, set(par, paramlens, p))
         

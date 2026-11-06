@@ -181,7 +181,8 @@ function newton_moore_penrose(iter::AbstractContinuationIterable,
             nothing
     end
 
-    while (step < max_iterations) && ~done && line_step && _continues(compute)
+    # a NaN residual stops the iterations, unconverged
+    while (step < max_iterations) && ~done && ~isnan(res) && line_step && _continues(compute)
         step += 1
         R01!(FiniteDifferences(), prob, dFdp, x, par, p)
         J = jacobian(prob, x, set(par, paramlens, p))
