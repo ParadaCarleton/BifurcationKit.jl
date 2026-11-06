@@ -120,10 +120,10 @@ function bordered_tangent(state::AbstractContinuationState,
     T = eltype(iter)
 
     # dFdl = ∂_p F(z.u, z.p)
-    dFdl = _dFdp(iter.prob, z.u, setparam(iter, z.p))
+    dFdl = _dFdp(getprob(iter), z.u, setparam(iter, z.p))
 
     # compute jacobian at the point
-    J = jacobian(iter.prob, z.u, setparam(iter, z.p))
+    J = jacobian(getprob(iter), z.u, setparam(iter, z.p))
 
     # extract tangent as solution of the above bordered linear system
     lbs = get_bordered_linsolver(iter)

@@ -13,6 +13,7 @@ module BifurcationKit
     import PreallocationTools: DiffCache, get_tmp
     using DocStringExtensions: DocStringExtensions, FIELDS, SIGNATURES, TYPEDEF, TYPEDFIELDS, TYPEDSIGNATURES
 
+    import EnumX
     # used in Problems.jl
     import SciMLBase
 
@@ -168,7 +169,7 @@ module BifurcationKit
     export Natural, PALC, CorrectorQuality, Multiple, Secant, Bordered, DefCont, Polynomial, MoorePenrose, MoorePenroseLS, AutoSwitch
 
     # newton methods
-    export NewtonPar, Newton, newton, newton_palc, newton_hopf, NonLinearSolution
+    export NewtonPar, Newton, newton, newton_palc, newton_hopf, NonLinearSolution, NewtonConverged
     export NonlinearSolveCorrector, FreeParameterNewton
 
     # continuation methods

@@ -529,7 +529,7 @@ function newton_palc(iter::AbstractContinuationIterable,
                     callback = cb_default,
                     stop_at_bounds::Bool = true,
                     kwargs...)
-    prob = iter.prob
+    prob = getprob(iter)
     par = getparams(prob)
     ϵ = getdelta(prob)
     paramlens = getlens(iter)

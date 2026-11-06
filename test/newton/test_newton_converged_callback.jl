@@ -49,3 +49,18 @@ let
         @test all(point -> norm(F(point.x, (r = point.p,)), Inf) < 1e-10 * maximum(abs, point.x), filter(point -> point.p <= 1.0, floored.sol))
     end
 end
+
+# low precision and `Multiple` pass the verdict through
+let
+    F(x, p) = @. x^3 / 3 + x - p.r
+    J(x, p) = diagm(0 => 1 .+ x .^ 2)
+    prob = BifurcationProblem(F, fill(2f0, 3), (r = 0.5f0,), (@optic _.r); J)
+    opts = NewtonPar(tol = 0f0, max_iterations = 10)
+    sol = BK.solve(prob, Newton(), opts; callback = ScaledTolerance(1f-3))
+    @test BK.converged(sol)
+    @test eltype(sol.u) == Float32
+
+    unreachable = ContinuationPar(p_min = 0f0, p_max = 1f0, ds = 0.05f0, max_steps = 200, detect_bifurcation = 0, newton_options = opts)
+    floored = continuation(prob, Multiple(PALC(θ = 0.5f0), copy(prob.u0), 0.01f0, 3; dsfact = 1.5f0), unreachable; callback_newton = ScaledTolerance(1f-3))
+    @test maximum(floored.param) >= 1
+end

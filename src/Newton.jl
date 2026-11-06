@@ -35,6 +35,8 @@ $(TYPEDFIELDS)
     @assert 0 <= tol "Tolerance must be non negative."
 end
 
+@inline geteigensolver(np::NewtonPar) = np.eigsolver
+
 """
 Structure which holds the solution from application of Newton-Krylov algorithm to a nonlinear problem.
 
@@ -116,6 +118,7 @@ function _newton(prob::AbstractBifurcationProblem, x0, params0, options::NewtonP
     flag = _converged((residuals[end] <= tol) | unmoved, callback((;x, fx, residual = res, step, options, x0, residuals, unmoved); fromNewton = true, kwargs...))
     (~flag && verbose) && @error("\n──> Newton algorithm failed to converge, residual = $(residuals[end])")
     verbose && print_nonlinear_step(0, res, 0, true) # display last line of the table
+    ((residuals[end] > tol) && verbose) && @error("\n──> Newton algorithm failed to converge, residual = $(residuals[end])")
     return NonLinearSolution(x, prob, residuals, flag, step, itlineartot)
 end
 
