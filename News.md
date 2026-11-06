@@ -3,6 +3,17 @@ BifurcationKit.jl, Changelog
 
 All notable changes to this project will be documented in this file (hopefully). No performance improvements will be notified but mainly the addition of new methods, the modifications of internal structs, etc.
 
+## [0.8.10]
+
+### Added
+- `NewtonPar` has a field `convergence_test`, a function `(state; kwargs...) -> Bool` of the Newton state. An iterate converges when `residual <= tol` and `convergence_test` both pass, and the Newton correctors iterate until they do; `tol = Inf` leaves convergence to `convergence_test` alone. This adds a trailing type parameter to `NewtonPar`, `ContinuationPar` and `ContIterable`
+
+### Fixed
+- the Newton correctors stopped when `residual <= tol` but accepted the iterate only when `residual < tol`, so an iterate with `residual == tol` (e.g. `tol = 0` and an exact solution) was refused; convergence is now `residual <= tol`
+
+### Deprecated
+- a Newton callback returning `NewtonConverged()`: pass the test as `NewtonPar(convergence_test = ...)` instead
+
 ## [0.8.9]
 
 ### Breaking changes

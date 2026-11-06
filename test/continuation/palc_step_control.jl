@@ -207,12 +207,12 @@ let
         @test cosine ≈ cos(φ - φ0) atol = 1e-6
         @test next.u ≈ oriented.u
     end
-    # a closing point at residual exactly tol = 0 passes the orientation test before it is accepted, as Newton's method
-    # accepts it (`residual <= tol`); a NaN residual reaches no tangent
+    # a closing point the corrector's convergence tests pass, such as a residual exactly tol = 0, goes through the
+    # orientation test before it is accepted; a NaN residual reaches no tangent
     exact = BK.PALCStepCheck(state, iter, iter.alg, nothing, 0.0, Returns(true))
     state.cache = BK._update(state.cache; started = true, rejected = false)
     function closing(position::BorderedArray, residual::Real)::NamedTuple
-        (x = position.u, p = position.p, residual)
+        (x = position.u, p = position.p, residual, converged = residual <= 0.0)
     end
     @test exact(closing(point(φ0 - 2.0), 0.0)) === false
     @test exact(closing(point(φ0 + 0.4), 0.0)) === true

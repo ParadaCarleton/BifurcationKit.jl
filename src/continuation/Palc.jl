@@ -314,6 +314,9 @@ struct PALCStepCheck{Tstate, Titer, Talg, Tc, T, Tcb}
     callback::Tcb
 end
 
+# the tolerance in the contraction offset `tol * η`: none when the residual test is off (`tol = Inf`)
+_contraction_tol(tol) = isfinite(tol) ? tol : zero(tol)
+
 _control(::Nothing, ::Type) = nothing
 _control(control::CorrectorQuality, ::Type{T}) where {T} = CorrectorQuality{T}(control)
 _quality(::Nothing) = nothing
@@ -348,9 +351,9 @@ function (check::PALCStepCheck)(newton_state; kwargs...)
         return false
     end
     verdict = check.callback(newton_state; kwargs...)
-    # the test runs on every point the corrector accepts by Newton's own rule, a residual exactly `tol` or a zero
-    # Newton update included; a NaN residual has not converged, so its tangent is never computed
-    if !_converged((newton_state.residual <= check.tol) | get(newton_state, :unmoved, false), verdict)
+    # the test runs on every point the corrector accepts by its convergence tests or a zero Newton update;
+    # a NaN residual has not converged, so its tangent is never computed
+    if !_converged(get(newton_state, :converged, false) | get(newton_state, :unmoved, false), verdict)
         return verdict
     end
     if ~_turns_forward!(check, BorderedArray(newton_state.x, p))
@@ -439,7 +442,7 @@ function corrector!(state::AbstractContinuationState,
         end
         control = _control(alg.step_control, eltype(it))
         state.cache = _update(state.cache; step_factor = nothing, quality = _quality(control), rejected = false, started = false)
-        _corrector!(state, it, alg, PALCStepCheck(state, it, alg, control, it.contparams.newton_options.tol, callback); kwargs...)
+        _corrector!(state, it, alg, PALCStepCheck(state, it, alg, control, _contraction_tol(it.contparams.newton_options.tol), callback); kwargs...)
         if converged(state) && ~isnothing(control)
             state.cache = _update(state.cache; step_factor = growth_factor(control, state.cache.quality))
             @debug "step growth" _group = :step_control step_factor = state.cache.step_factor capped = ~isnothing(control.max_growth) && growth_capped(control, state.cache.quality)
@@ -540,7 +543,7 @@ function newton_palc(iter::AbstractContinuationIterable,
     τ0 = state.τ
     (;z_pred, ds) = state
 
-    (;tol, max_iterations, verbose, α, αmin, linesearch) = contparams.newton_options
+    (;max_iterations, verbose, α, αmin, linesearch) = contparams.newton_options
     (;p_min, p_max) = contparams
     linsolver = get_bordered_linsolver(iter)
 
@@ -564,12 +567,13 @@ function newton_palc(iter::AbstractContinuationIterable,
     verbose && print_nonlinear_step(step, res)
     line_step = true
 
-    compute = callback((;x, res_f, residual = res, step, contparams, z0, z_pred, ds, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...)
+    compute, done = _verdicts(callback, contparams.newton_options, (;x, res_f, residual = res, step, contparams, z0, z_pred, ds, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...)
 
     # whether the last Newton update was exactly zero: every further step would repeat the same iterate
     unmoved = false
 
-    while (step < max_iterations) && (res > tol) && line_step && ~unmoved && _continues(compute)
+    # a NaN residual stops the iterations, unconverged
+    while (step < max_iterations) && ~done && ~isnan(res) && line_step && ~unmoved && _continues(compute)
         _dFdp!(prob, dFdp, x, par, p, res_f)
         J = J_next
         if isnothing(J)
@@ -646,10 +650,10 @@ function newton_palc(iter::AbstractContinuationIterable,
         verbose && print_nonlinear_step(step, res, itlinear)
 
         # shall we break the loop?
-        compute = callback((;x, res_f, J, residual=res, step, itlinear, contparams, z0, z_pred, ds, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...)
+        compute, done = _verdicts(callback, contparams.newton_options, (;x, res_f, J, residual=res, step, itlinear, contparams, z0, z_pred, ds, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...)
     end
     verbose && print_nonlinear_step(step, res, 0, true) # display last line of the table
-    flag = _converged((residuals[end] <= tol) | unmoved, callback((;x, res_f, residual = res, step, contparams, z0, z_pred, ds, p, residuals, options = (;linsolver), closing = true, unmoved); fromNewton = false, kwargs...)) & ~rejected
+    flag = _converged(done | unmoved, callback((;x, res_f, residual = res, step, contparams, z0, z_pred, ds, p, residuals, options = (;linsolver), closing = true, converged = done, unmoved); fromNewton = false, kwargs...)) & ~rejected
 
     return NonLinearSolution(BorderedArray(x, p),
                             prob,

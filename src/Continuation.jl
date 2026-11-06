@@ -33,7 +33,7 @@ $(TYPEDFIELDS)
 
 More information is available on the [website](https://bifurcationkit.github.io/BifurcationKitDocs.jl/dev/iterator/)
 """
-Base.@kwdef struct ContIterable{Tkind <: AbstractContinuationKind, Tprob, Talg <: AbstractContinuationAlgorithm, T, S, E, TnormC, Tfinalisesolution, TcallbackN, Tevent} <: AbstractContinuationIterable{Tkind}
+Base.@kwdef struct ContIterable{Tkind <: AbstractContinuationKind, Tprob, Talg <: AbstractContinuationAlgorithm, T, S, E, TnormC, Tfinalisesolution, TcallbackN, Tevent, C} <: AbstractContinuationIterable{Tkind}
     "type of solution computed during continuation, e.g. `EquilibriumCont` or `PeriodicOrbitCont`."
     kind::Tkind
     "bifurcation problem to be continued, see [`BifurcationProblem`](@ref)."
@@ -41,7 +41,7 @@ Base.@kwdef struct ContIterable{Tkind <: AbstractContinuationKind, Tprob, Talg <
     "continuation algorithm, e.g. [`PALC`](@ref) or [`MoorePenrose`](@ref)."
     alg::Talg
     "continuation parameters, see [`ContinuationPar`](@ref)."
-    contparams::ContinuationPar{T, S, E}
+    contparams::ContinuationPar{T, S, E, C}
     "whether to plot the branch during continuation."
     plot::Bool = false
     "structure for event detection."
