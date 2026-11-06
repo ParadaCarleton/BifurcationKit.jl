@@ -113,7 +113,8 @@ function _newton(prob::AbstractBifurcationProblem, x0, params0, options::NewtonP
     # whether the last Newton update was exactly zero: every further step would repeat the same iterate
     unmoved = false
 
-    while (step < max_iterations) && ~done && ~unmoved && _continues(compute)
+    # a NaN residual stops the iterations, unconverged
+    while (step < max_iterations) && ~done && ~isnan(res) && ~unmoved && _continues(compute)
         J = jacobian(prob, x, params0)
         u, cv, itlinear = options.linsolver(J, fx)
         ~cv && @debug "Linear solver for J did not converge."

@@ -572,7 +572,8 @@ function newton_palc(iter::AbstractContinuationIterable,
     # whether the last Newton update was exactly zero: every further step would repeat the same iterate
     unmoved = false
 
-    while (step < max_iterations) && ~done && line_step && ~unmoved && _continues(compute)
+    # a NaN residual stops the iterations, unconverged
+    while (step < max_iterations) && ~done && ~isnan(res) && line_step && ~unmoved && _continues(compute)
         _dFdp!(prob, dFdp, x, par, p, res_f)
         J = J_next
         if isnothing(J)
