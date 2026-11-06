@@ -53,7 +53,7 @@ Returns a variable containing the parameters to affect the `continuation` algori
     `DefaultEig()` follows the type of the Jacobian, whereas `EigArpack`
     only supports `Float64`.
 """
-@with_kw_noshow struct ContinuationPar{T, S <: AbstractLinearSolver, E <: AbstractEigenSolver}
+@with_kw_noshow struct ContinuationPar{T, S <: AbstractLinearSolver, E <: AbstractEigenSolver, C}
     # tangent predictor parameters for continuation
     ds::T    = 1e-2
     dsmin::T = oftype(ds, 1e-4)
@@ -70,7 +70,7 @@ Returns a variable containing the parameters to affect the `continuation` algori
     max_steps::Int64  = 400
 
     # Newton solver parameters
-    newton_options::NewtonPar{T, S, E} = NewtonPar{typeof(ds), typeof(DefaultLS()), typeof(DefaultEig())}()
+    newton_options::NewtonPar{T, S, E, C} = NewtonPar{typeof(ds), typeof(DefaultLS()), typeof(DefaultEig())}()
     η::T = oftype(ds, 150)              # parameter to estimate tangent at first point by finite differences
 
     save_to_file::Bool = false          # save to file?
@@ -109,6 +109,10 @@ Returns a variable containing the parameters to affect the `continuation` algori
     @assert tol_bisection_eigenvalue >= 0 "The option `tol_bisection_eigenvalue` must be positive"
     @assert plot_every_step > 0 "plot_every_step must be positive. You can turn off plotting by passing plot = false to `continuation`"
     @assert ~(detect_bifurcation > 1 && save_eig_every_step > 1) "We must at least save all eigenvalues for detection of bifurcation points. Please use save_eig_every_step = 1 or detect_bifurcation = 1."
+end
+
+function ContinuationPar{T, S, E}(; newton_options = NewtonPar{T, S, E}(), kwargs...) where {T, S, E}
+    return ContinuationPar{T, S, E, typeof(newton_options.convergence_test)}(; newton_options, kwargs...)
 end
 
 @inline compute_eigenelements(cp::ContinuationPar) = cp.detect_bifurcation > 0

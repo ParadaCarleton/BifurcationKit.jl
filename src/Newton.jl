@@ -3,6 +3,9 @@ $(TYPEDEF)
 
 Returns a variable containing parameters to affect the `newton` algorithm when solving `F(x) = 0`.
 
+# Convergence
+An iterate has converged when `residual <= tol` **and** `convergence_test(state; kwargs...)` returns `true`; the iterations go on until both hold. `state` is the named tuple passed to the Newton callback (see [`newton`](@ref)), and the test is called after the callback on each iterate. The default test always passes, so convergence is decided by `tol` alone; `tol = Inf` leaves it to `convergence_test` alone, for example a tolerance relative to the iterate.
+
 # Arguments for line search (Armijo)
 - `linesearch = false`: use line search algorithm (i.e. Newton with Armijo's rule)
 - `α = 1.0`: initial value of α (damping) parameter for line search algorithm
@@ -14,7 +17,7 @@ Returns a variable containing parameters to affect the `newton` algorithm when s
 # Internal fields
 $(TYPEDFIELDS)
 """
-@with_kw struct NewtonPar{T, L <: AbstractLinearSolver, E <: AbstractEigenSolver}
+@with_kw struct NewtonPar{T, L <: AbstractLinearSolver, E <: AbstractEigenSolver, C}
     "absolute tolerance for `F(x)`."
     tol::T = 1e-12
     "number of Newton iterations."
@@ -31,11 +34,27 @@ $(TYPEDFIELDS)
     α::T = oftype(tol, 1.0)
     "minimal damping."
     αmin::T = oftype(tol, 0.001)
+    "convergence test `(state; kwargs...) -> Bool` which must pass together with `residual <= tol`."
+    convergence_test::C = convergence_test_default
     @assert 0 <= α <= 1
     @assert 0 <= tol "Tolerance must be non negative."
 end
 
+NewtonPar{T, L, E}(; kwargs...) where {T, L, E} = _newton_par(T, L, E; kwargs...)
+function _newton_par(T, L, E; convergence_test = convergence_test_default, kwargs...)
+    return NewtonPar{T, L, E, typeof(convergence_test)}(; convergence_test, kwargs...)
+end
+
 @inline geteigensolver(np::NewtonPar) = np.eigsolver
+
+# default convergence test: convergence is decided by `tol` alone
+convergence_test_default(state; k...) = true
+
+# whether the iterate in `state` has converged according to `options`
+@inline _has_converged(options::NewtonPar, state; kwargs...) = (state.residual <= options.tol) && options.convergence_test(state; kwargs...)::Bool
+
+# the callback's verdict on `state` and whether `state` has converged
+@inline _verdicts(callback, options::NewtonPar, state; kwargs...) = (callback(state; kwargs...), _has_converged(options, state; kwargs...))
 
 """
 Structure which holds the solution from application of Newton-Krylov algorithm to a nonlinear problem.
@@ -73,7 +92,7 @@ function _newton(prob::AbstractBifurcationProblem, x0, params0, options::NewtonP
                     callback = cb_default,
                     kwargs...)
     # Extract parameters
-    (;tol, max_iterations, verbose) = options
+    (;max_iterations, verbose) = options
 
     x = _copy(x0)
     fx = residual(prob, x, params0)
@@ -90,11 +109,11 @@ function _newton(prob::AbstractBifurcationProblem, x0, params0, options::NewtonP
     verbose && print_nonlinear_step(step, res)
 
     # invoke callback before algo really starts
-    compute = callback((; x, fx, J = nothing, residual = res, step, options, x0, residuals); fromNewton = true, kwargs...)
+    compute, done = _verdicts(callback, options, (; x, fx, J = nothing, residual = res, step, options, x0, residuals); fromNewton = true, kwargs...)
     # whether the last Newton update was exactly zero: every further step would repeat the same iterate
     unmoved = false
 
-    while (step < max_iterations) && (res > tol) && ~unmoved && _continues(compute)
+    while (step < max_iterations) && ~done && ~unmoved && _continues(compute)
         J = jacobian(prob, x, params0)
         u, cv, itlinear = options.linsolver(J, fx)
         ~cv && @debug "Linear solver for J did not converge."
@@ -113,12 +132,11 @@ function _newton(prob::AbstractBifurcationProblem, x0, params0, options::NewtonP
 
         verbose && print_nonlinear_step(step, res, itlinear)
 
-        compute = callback((;x, fx, J, residual = res, step, itlinear, options, x0, residuals); fromNewton = true, kwargs...)
+        compute, done = _verdicts(callback, options, (;x, fx, J, residual = res, step, itlinear, options, x0, residuals); fromNewton = true, kwargs...)
     end
-    flag = _converged((residuals[end] <= tol) | unmoved, callback((;x, fx, residual = res, step, options, x0, residuals, unmoved); fromNewton = true, kwargs...))
+    flag = _converged(done | unmoved, callback((;x, fx, residual = res, step, options, x0, residuals, unmoved); fromNewton = true, kwargs...))
     (~flag && verbose) && @error("\n──> Newton algorithm failed to converge, residual = $(residuals[end])")
     verbose && print_nonlinear_step(0, res, 0, true) # display last line of the table
-    ((residuals[end] > tol) && verbose) && @error("\n──> Newton algorithm failed to converge, residual = $(residuals[end])")
     return NonLinearSolution(x, prob, residuals, flag, step, itlineartot)
 end
 
@@ -146,7 +164,7 @@ This is the Newton-Krylov Solver for `F(x, p0) = 0` with Jacobian w.r.t. `x` wri
     
     They can be used as `callback = (state;k...) -> state.residual<1` for example.
 
-    The callback returns `true` to go on, `false` to stop, not converged, or [`NewtonConverged()`](@ref NewtonConverged) to stop, converged, whatever `options.tol`. The value of the call after the last iteration decides convergence: `true` leaves it to `residual <= options.tol` or a Newton update of exactly zero, `false` refuses it and `NewtonConverged()` accepts the last iterate.
+    The callback returns `true` to go on or `false` to stop. The call after the last iteration can veto convergence by returning `false`. Convergence tests belong in `options`: see [`NewtonPar`](@ref). A Newton update of exactly zero also counts as converged.
 - `kwargs` arguments passed to the callback. Useful when `newton` is called from `continuation`
 
 # Output:
@@ -163,16 +181,19 @@ cb_default(state; k...) = true
 """
     NewtonConverged()
 
-A Newton callback's verdict that the current iterate is a solution: the iterations stop, and the call after the last one returning it marks the solution converged whatever its residual. It hosts convergence tests other than `residual <= tol`, such as a tolerance that depends on the iterate. See [`newton`](@ref).
+Deprecated Newton callback verdict that stops the iterations and marks the last iterate converged whatever its residual. Pass the test as `convergence_test` in [`NewtonPar`](@ref) instead, with `tol = Inf` to drop the residual test.
 """
 struct NewtonConverged end
 
 # whether the Newton iterations go on after the callback's verdict
 _continues(verdict::Bool) = verdict
-_continues(::NewtonConverged) = false
+function _continues(::NewtonConverged)
+    Base.depwarn("A Newton callback returning `NewtonConverged()` is deprecated: pass the test as `NewtonPar(convergence_test = ...)`, with `tol = Inf` to drop the residual test.", :NewtonConverged)
+    return false
+end
 
-# whether a solve whose last residual is at most `tol` (`below_tol`) converged, given the last call of the callback
-_converged(below_tol::Bool, verdict::Bool) = below_tol & verdict
+# whether a solve whose last iterate passes the convergence tests (`passed`) converged, given the last call of the callback
+_converged(passed::Bool, verdict::Bool) = passed & verdict
 _converged(::Bool, ::NewtonConverged) = true
 
 # the verdict of a callback whose verdict `verdict` must also pass the check `check`
