@@ -48,11 +48,10 @@ function (algcont::Multiple)(state; kwargs...)
     residuals = get(state, :residuals, nothing)
     iteration = isnothing(residuals) ? 0 : length(residuals)
     contparams = get(state, :contparams, nothing)
-    tol = isnothing(contparams) ? Inf : contparams.newton_options.tol
     if algcont.currentind > 1
         if iteration - algcont.pmimax > 0
             out = residuals[end] <= algcont.α * residuals[end-algcont.pmimax]
-            out = out || residuals[end] < tol
+            out = out || (~isnothing(contparams) && _has_converged(contparams.newton_options, state; kwargs...))
             return out
         end
     end

@@ -204,7 +204,7 @@ function newton_palc(iter::AbstractContinuationIterable,
     τ0 = state.τ
     (;z_pred, ds) = state
 
-    (;tol, max_iterations, verbose, α, αmin, linesearch) = contparams.newton_options
+    (;max_iterations, verbose, α, αmin, linesearch) = contparams.newton_options
     (;p_min, p_max) = contparams
     linsolver = get_bordered_linsolver(iter)
 
@@ -227,9 +227,9 @@ function newton_palc(iter::AbstractContinuationIterable,
     verbose && print_nonlinear_step(step, res)
     line_step = true
 
-    compute = callback((;x, res_f, residual = res, step, contparams, z0, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...)
+    compute, done = _verdicts(callback, contparams.newton_options, (;x, res_f, residual = res, step, contparams, z0, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...)
 
-    while (step < max_iterations) && (res > tol) && line_step && _continues(compute)
+    while (step < max_iterations) && ~done && line_step && _continues(compute)
         R01!(FiniteDifferences(), prob, dFdp, x, par, p, res_f)
         J = jacobian(prob, x, set(par, paramlens, p))
         
@@ -286,10 +286,10 @@ function newton_palc(iter::AbstractContinuationIterable,
         verbose && print_nonlinear_step(step, res, itlinear)
 
         # shall we break the loop?
-        compute = callback((;x, res_f, J, residual=res, step, itlinear, contparams, z0, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...)
+        compute, done = _verdicts(callback, contparams.newton_options, (;x, res_f, J, residual=res, step, itlinear, contparams, z0, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...)
     end
     verbose && print_nonlinear_step(step, res, 0, true) # display last line of the table
-    flag = _converged(residuals[end] < tol, callback((;x, res_f, residual = res, step, contparams, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...))
+    flag = _converged(done, callback((;x, res_f, residual = res, step, contparams, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...))
 
     return NonLinearSolution(BorderedArray(x, p),
                             prob,

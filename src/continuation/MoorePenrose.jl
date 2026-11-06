@@ -147,7 +147,7 @@ function newton_moore_penrose(iter::AbstractContinuationIterable,
     τ0 = state.τ
     z_pred = state.z_pred
 
-    (;tol, max_iterations, verbose) = contparams.newton_options
+    (;max_iterations, verbose) = contparams.newton_options
     (;p_min, p_max) = contparams
     linsolver = alg.ls
 
@@ -169,7 +169,7 @@ function newton_moore_penrose(iter::AbstractContinuationIterable,
     verbose && print_nonlinear_step(step, res)
     line_step = true
 
-    compute = callback((;x, res_f, residual = res, step, contparams, p, residuals, z0); fromNewton = false, kwargs...)
+    compute, done = _verdicts(callback, contparams.newton_options, (;x, res_f, residual = res, step, contparams, p, residuals, z0); fromNewton = false, kwargs...)
 
     _static_cond_iterative = (linsolver isa AbstractIterativeLinearSolver) || (method === iterative)
 
@@ -181,7 +181,7 @@ function newton_moore_penrose(iter::AbstractContinuationIterable,
             nothing
     end
 
-    while (step < max_iterations) && (res > tol) && line_step && _continues(compute)
+    while (step < max_iterations) && ~done && line_step && _continues(compute)
         step += 1
         R01!(FiniteDifferences(), prob, dFdp, x, par, p)
         J = jacobian(prob, x, set(par, paramlens, p))
@@ -236,10 +236,10 @@ function newton_moore_penrose(iter::AbstractContinuationIterable,
         verbose && print_nonlinear_step(step, res, itlinear)
 
         # break the while-loop?
-        compute = callback((;x, res_f, J, residual=res, step, itlinear, contparams, p, residuals, z0); fromNewton = false, kwargs...)
+        compute, done = _verdicts(callback, contparams.newton_options, (;x, res_f, J, residual=res, step, itlinear, contparams, p, residuals, z0); fromNewton = false, kwargs...)
     end
     verbose && print_nonlinear_step(step, res, 0, true) # display last line of the table
-    flag = _converged(residuals[end] < tol, callback((;x, res_f, nothing, residual=res, step, contparams, p, residuals, z0); fromNewton = false, kwargs...))
+    flag = _converged(done, callback((;x, res_f, nothing, residual=res, step, contparams, p, residuals, z0); fromNewton = false, kwargs...))
 
     return NonLinearSolution(BorderedArray(x, p),
                             prob,
