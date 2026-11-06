@@ -566,7 +566,10 @@ function newton_palc(iter::AbstractContinuationIterable,
 
     compute = callback((;x, res_f, residual = res, step, contparams, z0, z_pred, ds, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...)
 
-    while (step < max_iterations) && (res > tol) && line_step && _continues(compute)
+    # whether the last Newton update was exactly zero: every further step would repeat the same iterate
+    unmoved = false
+
+    while (step < max_iterations) && (res > tol) && line_step && ~unmoved && _continues(compute)
         _dFdp!(prob, dFdp, x, par, p, res_f)
         J = J_next
         if isnothing(J)
@@ -581,8 +584,11 @@ function newton_palc(iter::AbstractContinuationIterable,
         u, up, flag, itlinear = solve_bls_palc(linsolver, iter, state, J, dFdp, res_f, res_n)
         ~flag && @debug "[newton_palc] Linear solver for J did not converge."
         itlineartot += sum(itlinear)
+        unmoved = flag && iszero(normN(u)) && iszero(up)
 
-        if linesearch
+        if unmoved
+            # the iterate stays where it is
+        elseif linesearch
             J_next = nothing
             line_step = false
             while !line_step && (α > αmin)
@@ -643,7 +649,7 @@ function newton_palc(iter::AbstractContinuationIterable,
         compute = callback((;x, res_f, J, residual=res, step, itlinear, contparams, z0, z_pred, ds, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...)
     end
     verbose && print_nonlinear_step(step, res, 0, true) # display last line of the table
-    flag = _converged(residuals[end] <= tol, callback((;x, res_f, residual = res, step, contparams, z0, z_pred, ds, p, residuals, options = (;linsolver), closing = true); fromNewton = false, kwargs...)) & ~rejected
+    flag = _converged((residuals[end] <= tol) | unmoved, callback((;x, res_f, residual = res, step, contparams, z0, z_pred, ds, p, residuals, options = (;linsolver), closing = true); fromNewton = false, kwargs...)) & ~rejected
 
     return NonLinearSolution(BorderedArray(x, p),
                             prob,

@@ -107,6 +107,32 @@ let
     BK._step_size_control!(state, opts, 0)
     @test state.stopcontinuation
 end
+# a Newton update of exactly zero ends the solve, converged, when its linear solve converged
+struct ZeroSolve <: BK.AbstractLinearSolver
+    converged::Bool
+end
+(solve::ZeroSolve)(J, rhs; kwargs...) = (zero(rhs), solve.converged, 1)
+struct ZeroBLS <: BK.AbstractBorderedLinearSolver
+    converged::Bool
+end
+(solve::ZeroBLS)(J, dR, dzu, dzp, R, n, ξu, ξp; kwargs...) = (zero(R), zero(n), solve.converged, 1)
+let
+    prob = BK.BifurcationProblem((u, p) -> u .- p.λ, [0.], (λ = 1.,), (@optic _.λ))
+    for converged in (true, false)
+        sol = BK.solve(prob, Newton(), NewtonPar(tol = 1e-12, max_iterations = 10, linsolver = ZeroSolve(converged)))
+        @test BK.converged(sol) == converged
+        @test length(sol.residuals) == ifelse(converged, 2, 11)
+    end
+    opts = ContinuationPar(ds = 0.05, dsmin = 1e-3, dsmax = 0.1, p_min = 0., p_max = 2., max_steps = 10, detect_bifurcation = 0, newton_options = NewtonPar(tol = 1e-12, max_iterations = 10))
+    for converged in (true, false)
+        iter = ContIterable(BK.re_make(prob; params = (λ = 0.,)), PALC(bls = ZeroBLS(converged)), opts)
+        state = iterate(iter)[2]
+        state.z_pred = BorderedArray([0.5], 0.1)
+        sol = BK.newton_palc(iter, state)
+        @test BK.converged(sol) == converged
+        @test sol.u.u == [0.5]
+    end
+end
 ####################################################################################################
 # test continuation algorithm
 let
