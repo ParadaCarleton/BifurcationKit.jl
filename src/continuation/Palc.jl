@@ -348,9 +348,9 @@ function (check::PALCStepCheck)(newton_state; kwargs...)
         return false
     end
     verdict = check.callback(newton_state; kwargs...)
-    # the test runs on every point the corrector accepts by Newton's own rule, a residual exactly `tol` included;
-    # a NaN residual has not converged, so its tangent is never computed
-    if !_converged(newton_state.residual <= check.tol, verdict)
+    # the test runs on every point the corrector accepts by Newton's own rule, a residual exactly `tol` or a zero
+    # Newton update included; a NaN residual has not converged, so its tangent is never computed
+    if !_converged((newton_state.residual <= check.tol) | get(newton_state, :unmoved, false), verdict)
         return verdict
     end
     if ~_turns_forward!(check, BorderedArray(newton_state.x, p))
@@ -649,7 +649,7 @@ function newton_palc(iter::AbstractContinuationIterable,
         compute = callback((;x, res_f, J, residual=res, step, itlinear, contparams, z0, z_pred, ds, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...)
     end
     verbose && print_nonlinear_step(step, res, 0, true) # display last line of the table
-    flag = _converged((residuals[end] <= tol) | unmoved, callback((;x, res_f, residual = res, step, contparams, z0, z_pred, ds, p, residuals, options = (;linsolver), closing = true); fromNewton = false, kwargs...)) & ~rejected
+    flag = _converged((residuals[end] <= tol) | unmoved, callback((;x, res_f, residual = res, step, contparams, z0, z_pred, ds, p, residuals, options = (;linsolver), closing = true, unmoved); fromNewton = false, kwargs...)) & ~rejected
 
     return NonLinearSolution(BorderedArray(x, p),
                             prob,

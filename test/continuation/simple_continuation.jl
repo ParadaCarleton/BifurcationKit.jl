@@ -132,6 +132,18 @@ let
         @test BK.converged(sol) == converged
         @test sol.u.u == [0.5]
     end
+    # a step that ends on a zero update still meets orientation_check: a predictor behind the current point is refused
+    for (z_pred, forward) in ((BorderedArray([0.75], 0.7), true), (BorderedArray([0.35], 0.3), false))
+        alg = PALC(bls = ZeroBLS(true), orientation_check = true)
+        iter = ContIterable(BK.re_make(prob; params = (λ = 0.,)), alg, opts)
+        state = iterate(iter)[1]
+        state.z = BorderedArray([0.5], 0.5)
+        state.τ = BorderedArray([sqrt(0.5)], sqrt(0.5))
+        state.cache = BK._update(state.cache; orientation = 1)
+        state.z_pred = z_pred
+        BK.corrector!(state, iter, alg)
+        @test BK.converged(state) == forward
+    end
 end
 ####################################################################################################
 # test continuation algorithm
