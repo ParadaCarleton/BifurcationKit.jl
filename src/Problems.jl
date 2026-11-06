@@ -87,7 +87,7 @@ $(TYPEDFIELDS)
 - `R21(pb::BifFunction, x, p, dx1, dx2, dp1)` calls `pb.jet.R21(x, p, dx1, dx2, dp1)`. Same for the other jet functions.
 - etc
 """
-struct BifFunction{Tf, TFinp, Tdf, Tdfad, Tj, Tjad, TJinp, Td2f, Td2fc, Td3f, Td3fc, Tδ, Tjet} <: AbstractBifurcationFunction
+struct BifFunction{Tf, TFinp, Tdf, Tdfad, Tj, Tjad, TJinp, Td2f, Td2fc, Td3f, Td3fc, Tδ, Tjet, Tfj} <: AbstractBifurcationFunction
     "Vector field. Function of type out-of-place `result = f(x, p)` or inplace `f(result, x, p)`. For type stability, the types of `x` and `result` should match"
     F::Tf
     "Same as F but inplace with signature F!(result, x, p)"
@@ -121,6 +121,8 @@ struct BifFunction{Tf, TFinp, Tdf, Tdfad, Tj, Tjad, TJinp, Td2f, Td2fc, Td3f, Td
     inplace::Bool
     "jet of the vector field."
     jet::Tjet
+    "Residual and jacobian at `(x, p)` from one call, `FJ(x, p) = (F(x, p), J(x, p))`, for a vector field whose two share most of their work. `nothing` when not given."
+    FJ::Tfj
 end
 
 # getters
@@ -142,6 +144,20 @@ jacobian(pb::BifFunction, x, p) = pb.J(x, p)
 function jacobian(pb::BifFunction{Tf, TFinp, Tdf, Tdfad, Nothing}, x, p) where {Tf, TFinp, Tdf, Tdfad}
     ForwardDiff.jacobian(z -> pb.F(z, p), x)
 end
+#####
+"""
+$(SIGNATURES)
+
+`(F(x, p), J(x, p))`: from the one call `FJ(x, p)` when the problem was given an `FJ`, else from `residual` and `jacobian`.
+"""
+function residual_and_jacobian(pb::BifFunction, x, p)
+    if has_FJ(pb)
+        return pb.FJ(x, p)
+    end
+    return residual(pb, x, p), jacobian(pb, x, p)
+end
+has_FJ(pb::BifFunction) = ~isnothing(pb.FJ)
+has_FJ(::AbstractBifurcationProblem) = false
 #####
 jacobian!(pb::BifFunction, J, x, p) = pb.J!(J, x, p)
 
@@ -246,7 +262,6 @@ for Rij in _field_jet
 end
 
 function Base.show(io::IO, jet::Jet; prefix = "")
-    color = :cyan; bold = true
     println(io, prefix * "┌─ Tayor jet [fields not shown are nothing]")
     for Rij in _field_jet
         rij = getproperty(jet, Rij)
@@ -286,7 +301,7 @@ by forward finite differences with step `δ = getdelta(prob)`.
 
 # Arguments
 - `prob` bifurcation problem
-- `dFdp` output vector, overwritten inplace
+- `dFdp` output vector, overwritten inplace. It must have the same layout as the residual `F(x, p)`, which may differ from that of `x`.
 - `x` current solution
 - `par` full set of parameters
 - `p` current value of the parameter `getlens(prob)`
@@ -316,8 +331,35 @@ function R01(::FiniteDifferences,
                 prob::AbstractBifurcationProblem,
                 x,
                 par; δ = getdelta(prob))
+    res_f = residual(prob, x, par)
+    # dFdp lives in the residual space, whose layout may differ from the state x
+    dFdp = VI.zerovector(res_f)
+    R01!(FiniteDifferences(), prob, dFdp, x, par, _get(par, getlens(prob)), res_f; δ)
+    return dFdp
+end
+
+"""
+$(SIGNATURES)
+
+`∂_p F(x, p)` written into `dFdp` for the correctors and tangents of continuation: the problem's own `R01(x, par)` when the user passed one, else forward finite differences (`R01!(FiniteDifferences(), …)`).
+"""
+_dFdp!(prob::AbstractBifurcationProblem, dFdp, x, par, p, res_f = nothing) = R01!(FiniteDifferences(), prob, dFdp, x, par, p, res_f)
+
+function _dFdp!(prob::AbstractAllJetBifProblem, dFdp, x, par, p, res_f = nothing)
+    if has_R01_trait(prob) isa TraitUserPassed
+        return _copyto!(dFdp, R01(TraitUserPassed(), prob, x, set(par, getlens(prob), p)))
+    end
+    return R01!(FiniteDifferences(), prob, dFdp, x, par, p, res_f)
+end
+
+"""
+$(SIGNATURES)
+
+Out-of-place [`_dFdp!`](@ref) at the parameters `par`.
+"""
+function _dFdp(prob::AbstractBifurcationProblem, x, par)
     dFdp = VI.zerovector(x)
-    R01!(FiniteDifferences(), prob, dFdp, x, par, _get(par, getlens(prob)))
+    _dFdp!(prob, dFdp, x, par, _get(par, getlens(prob)))
     return dFdp
 end
 
@@ -368,6 +410,7 @@ const _dict_doc_string_prob = Dict(
 )
 
 save_solution_default(x, p) = x
+restore_problem_default(prob, x, pars) = prob
 update_default(args...; kwargs...) = true
 record_sol_default(x, p; kwargs...) = norm(x)
 plot_default(x, p; kwargs...) = nothing              # for Plots.jl
@@ -422,11 +465,13 @@ for (op, at, kd) in (
                 - `d2F` second Differential of `F` with respect to `x`, signature `d2F(x, p, dx1, dx2)`
                 - `d3F` third Differential of `F` with respect to `x`, signature `d3F(x, p, dx1, dx2, dx3)`
                 - `save_solution` specify a particular way to record solution which are written in `br.sol`. This can be useful in very particular situations and we recommend using `record_from_solution` instead. For example, it is used internally to record the mesh in the collocation method because this mesh can be modified.
+                - `restore_problem!` function used to restore the problem to the state it had at a saved solution, signature `restore_problem!(prob, x_saved, pars)`
+                - `update!` function used to update the problem after each continuation step, signature `update!(prob, iter, state)`
 
             # Internal fields
             $(TYPEDFIELDS)
             """
-            struct $op{Tvf, Tu, Tp, Tl <: AllOpticTypes, Tplot, Trec, Tgets, Tupdate} <: AbstractAllJetBifProblem
+            struct $op{Tvf, Tu, Tp, Tl <: AllOpticTypes, Tplot, Trec, Tgets, Trestore, Tupdate} <: AbstractAllJetBifProblem
                 "Vector field, typically a [`BifFunction`](@ref)."
                 VF::Tvf
                 "Initial guess."
@@ -439,8 +484,10 @@ for (op, at, kd) in (
                 plotSolution::Tplot
                 "`record_from_solution = (x, p; k...) -> norm(x)` function used to record a few indicators about the solution. It could be `norm` or `(x, p; k...) -> x[1]`. This is also useful when saving several huge vectors is not possible for memory reasons (for example on GPU). This function can return pretty much everything but you should keep it small. For example, you can do `(x, p; k...) -> (x1 = x[1], x2 = x[2], nrm = norm(x))` or simply `(x, p; k...) -> (sum(x), 1)` or `(x, p; k...) -> [x[1], x[2]]`. This will be stored in `contres.branch` where `contres::AbstractBranchResult` is the continuation curve of the bifurcation problem. Finally, the first component is used for plotting in the continuation curve."
                 recordFromSolution::Trec
-                "Function to save the full solution on the branch. Some problem are updated during computation (like periodic orbit functional with adaptive mesh) and this function allows to save the state of the problem along with the solution itself. Note that this should allocate the output (i.e. not as a view). Signature: `save_solution(x, p)`. Defaults to `save_solution_default(x, p) = x`. The saved solution can be retrieved back using `saved_solution` with signature `saved_solution(x_saved)`. Finally, a function `restore_problem!(prob, x_saved, pars)` which defaults to `restore_problem!(prob, x_saved, pars) = prob` should be provided. It allows to `update` the problem to the state it was at `x_saved`"
+                "Function to save the full solution on the branch. Some problem are updated during computation (like periodic orbit functional with adaptive mesh) and this function allows to save the state of the problem along with the solution itself. Note that this should allocate the output (i.e. not as a view). Signature: `save_solution(x, p)`. Defaults to `save_solution_default(x, p) = x`. The saved solution can be retrieved back using `saved_solution` with signature `saved_solution(x_saved)`. See the field `restore_problem!` to restore the problem to the state it was at `x_saved`"
                 save_solution::Tgets
+                "Function to restore the problem to the state it had when a saved solution was recorded. Signature: `restore_problem!(prob, x_saved, pars)`. Defaults to `restore_problem_default(prob, x_saved, pars) = prob`."
+                restore_problem!::Trestore
                 "Function to update the problem after each continuation step. Defaults to `update_default`. It has signature `update!(prob, iter, state)` where `prob` is the current bifurcation problem, `iter::ContIterable` the current iterable and `state::ContState` the current state of the continuation. It should return `true` if the update was successful and `false` otherwise. The continuation will stop if `false` is returned. This type of function is useful for example to update the problem internals like meshes, preconditioners, etc. Note that you can extract the type of continuation from `iter` (for example `FoldCont`) and thus modify the method `update!` accordingly."
                 update!::Tupdate
             end
@@ -449,6 +496,7 @@ for (op, at, kd) in (
             plot_solution(prob::$op) = prob.plotSolution
             record_from_solution(prob::$op, x, p; k...) = prob.recordFromSolution(x, p; k...)
             save_solution(prob::$op, x, p) = prob.save_solution(x, p)
+            restore_problem!(prob::$op, x, pars) = prob.restore_problem!(prob, x, pars)
             @inline update!(prob::$op, args...; kwargs...) = prob.update!(args...; kwargs...)
         end
     elseif op in (:FoldMAProblem, :HopfMAProblem, :PDMAProblem, :NSMAProblem, :BTMAProblem)
@@ -519,14 +567,18 @@ for (op, at, kd) in (
             Constructor for a bifurcation problem.
             
             ## Optional argument
-            - `R01` correspond to the computation of dₚF. Can be `AutoDiff(), FiniteDifferences()` or a function `dpF(x,par,p)`
+            - `R01` correspond to the computation of dₚF. Can be `AutoDiff(), FiniteDifferences()` or a function `dpF(x, par)`. The correctors and tangents of continuation (`PALC`, `MoorePenrose`, `Bordered`) use a passed function and finite differences otherwise.
+            - `FJ` function `FJ(x, p)` returning `(F(x, p), J(x, p))` from one evaluation. Newton's method in `PALC` calls it in place of `F` and `J`.
+
+            A literal `inplace` keyword gives a concretely typed problem: the constructor propagates constants so the vector field's type is known at compile time.
             """
-            function $op(_F, u0, parms, lens = (@optic _);
+            Base.@constprop :aggressive function $op(_F, u0, parms, lens = (@optic _);
                          jvp = nothing,
                          vjp = nothing,
                          J = nothing,
                          J! = nothing,
                          Jᵗ = nothing,
+                         FJ = nothing,
                          d2F = nothing,
                          d2Fc = nothing,
                          d3F = nothing,
@@ -536,25 +588,27 @@ for (op, at, kd) in (
                          plot_solution = plot_default,
                          delta = _getprecision(u0),
                          save_solution = save_solution_default,
-                         inplace = false,
+                         inplace::Union{Nothing, Bool} = nothing,
+                         restore_problem! = restore_problem_default,
                          update! = update_default,
                          R01 = AutoDiff(),
                          R02 = AutoDiff(),
                          R11 = FiniteDifferences(),
                          kwargs_jet...)
                 @assert lens isa Int || lens isa AllOpticTypes
+                inplace = something(inplace, _isinplace(_F))
                 new_lens = lens isa Int ? (@optic _[lens]) : lens
                 if _get(parms, new_lens) isa Int
                     @warn "You passed the parameter value $(_get(parms, new_lens)) for the optic `$new_lens` which is an integer. This may error. Please use a float."
                 end
-                Foop = if inplace || _isinplace(_F)
+                Foop = if inplace
                     # promote_type useful for R01 and R11
                     (x, p) -> _F(similar(x, promote_type(VI.scalartype(x), typeof(_get(p, new_lens)))), x, p)
                 else
                     _F
                 end
 
-                Finp = if inplace || _isinplace(_F)
+                Finp = if inplace
                     _F
                 else
                     (o, x, p) -> _copyto!(o, _F(x, p))
@@ -582,7 +636,8 @@ for (op, at, kd) in (
                                 issymmetric,
                                 delta,
                                 inplace,
-                                jet)
+                                jet,
+                                FJ)
                 return $op(vf,
                             u0,
                             parms,
@@ -590,6 +645,7 @@ for (op, at, kd) in (
                             plot_solution,
                             record_from_solution,
                             save_solution,
+                            restore_problem!,
                             update!)
             end
         end
@@ -625,6 +681,8 @@ residual(pb::AbstractAllJetBifProblem, x, p) = residual(pb.VF, x, p)
 residual!(pb::AbstractAllJetBifProblem, o, x, p) = residual!(pb.VF, o, x, p)
 jacobian(pb::AbstractAllJetBifProblem, x, p) = jacobian(pb.VF, x, p)
 jacobian!(pb::AbstractAllJetBifProblem, J, x, p) = jacobian!(pb.VF, J, x, p)
+residual_and_jacobian(pb::AbstractAllJetBifProblem, x, p) = residual_and_jacobian(pb.VF, x, p)
+has_FJ(pb::AbstractAllJetBifProblem) = has_FJ(pb.VF)
 jacobian_adjoint(pb::AbstractAllJetBifProblem, x, p) = jacobian_adjoint(pb.VF, x, p)
 dF(pb::AbstractAllJetBifProblem, x, p, dx) = dF(pb.VF, x, p, dx)
 d2F(pb::AbstractAllJetBifProblem, x, p, dx1, dx2) = d2F(pb.VF, x, p, dx1, dx2)
@@ -829,6 +887,7 @@ for op in (
         end
         (fr::$op)(x, p; kwargs...) = fr.user_record_from_solution(x, p; kwargs...)
         (fr::$op{Nothing})(x, p; kwargs...) = fr.vf_record_from_solution(x, p; kwargs...)
+        (fr::$op{Nothing, Nothing})(x, p; kwargs...) = (norm(x))
         $op(u::$op, vf) = u # constructor, do not iterate the same structure
     end
 end
