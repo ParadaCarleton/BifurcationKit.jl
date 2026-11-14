@@ -426,3 +426,11 @@ let
     @test 0.4 < br.branch.param[end] <= 0.5
     @test all(isfinite, br.branch.param)
 end
+####################################################################################################
+# a step control already in the state's type is used as is; another one converts
+let
+    control = CorrectorQuality(max_distance = 0.4)
+    @test BK._control(control, Float64) === control
+    @test BK._control(control, Float32) isa CorrectorQuality{Float32}
+    @test BK._control(nothing, Float64) === nothing
+end
