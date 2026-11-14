@@ -433,4 +433,9 @@ let
     @test BK._control(control, Float64) === control
     @test BK._control(control, Float32) isa CorrectorQuality{Float32}
     @test BK._control(nothing, Float64) === nothing
+    # `===` holds for an equal rebuilt value too, so check that the same-type call compiles to returning its argument;
+    # a coverage run adds `code_coverage_effect` statements, which do no work
+    typed = first(only(code_typed(BK._control, (typeof(control), Type{Float64}))))
+    @test !any(statement -> statement isa Expr && statement.head !== :code_coverage_effect, typed.code)
+    @test last(typed.code) == Core.ReturnNode(Core.Argument(2))
 end
