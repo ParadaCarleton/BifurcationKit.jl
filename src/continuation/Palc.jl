@@ -316,6 +316,8 @@ end
 
 _control(::Nothing, ::Type) = nothing
 _control(control::CorrectorQuality, ::Type{T}) where {T} = CorrectorQuality{T}(control)
+"A step control already in the state's type `T`, used as is: the corrector asks for it at every step."
+_control(control::CorrectorQuality{T}, ::Type{T}) where {T} = control
 _quality(::Nothing) = nothing
 _quality(control::CorrectorQuality) = StepQuality(control)
 

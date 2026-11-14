@@ -11,3 +11,11 @@ in_place(x::Vector{Float32}, level::Float32) = BifurcationProblem(residual!, x, 
         @test isconcretetype(inferred)
     end
 end
+
+"A callable of four arguments, which fails the arity check `_isinplace` runs on a vector field."
+four_arguments(x, p, a, b) = x
+
+@testset "an explicit inplace skips the vector field's arity check" begin
+    @test_throws ErrorException BifurcationProblem(four_arguments, [1.0], 0.0)
+    @test BifurcationProblem(four_arguments, [1.0], 0.0; inplace = false) isa BifurcationProblem
+end
