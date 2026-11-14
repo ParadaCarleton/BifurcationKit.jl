@@ -427,6 +427,34 @@ let
     @test all(isfinite, br.branch.param)
 end
 ####################################################################################################
+# the orientation test takes the Jacobian at the converged point from Newton's fused `FJ` call: the Jacobian calls do
+# not grow with the steps, and the branch is the one whose test computes each Jacobian
+let
+    F(x, p) = [x[1]^3 + x[1] - p.λ]
+    jacobian_calls = Ref(0)
+    J(x, p) = (jacobian_calls[] += 1; [3 * x[1]^2 + 1;;])
+    FJ(x, p) = (F(x, p), [3 * x[1]^2 + 1;;])
+    options(steps) = ContinuationPar(ds = 0.05, dsmax = 0.1, p_min = -10.0, p_max = 10.0, max_steps = steps, detect_fold = false, detect_bifurcation = 0)
+    function traced(steps, fused)
+        prob = BifurcationProblem(F, [0.0], (λ = 0.0,), (@optic _.λ); J, FJ = fused ? FJ : nothing)
+        jacobian_calls[] = 0
+        br = continuation(prob, PALC(; tangent = Bordered(), orientation_check = true), options(steps))
+        return br, jacobian_calls[]
+    end
+    # the steps stop short of p_max, where the corrector at the bound computes Jacobians of its own
+    short, short_calls = traced(4, true)
+    long, long_calls = traced(8, true)
+    unfused, unfused_calls = traced(8, false)
+    @test length(long) > length(short)
+    @test last(long.branch.param) < 10
+    @test long_calls == short_calls
+    @test unfused_calls > long_calls
+    @test long.branch.param == unfused.branch.param
+    warm_bytes(fused) = (traced(8, fused); @allocated traced(8, fused))
+    # Newton's closing state has a concrete type with or without `J_at_x`: the fused trace allocates no more
+    @test warm_bytes(true) <= warm_bytes(false)
+end
+####################################################################################################
 # a step control already in the state's type is used as is; another one converts
 let
     control = CorrectorQuality(max_distance = 0.4)

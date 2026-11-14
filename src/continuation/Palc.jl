@@ -303,7 +303,7 @@ $(TYPEDEF)
 
 Newton callback of [`PALC`](@ref) with `step_control` or `orientation_check`, wrapping the Newton callback `callback`.
 After each Newton step it applies the tests of `control` to the distance between consecutive iterates, in the norm of the arc length constraint.
-After the last step it applies the orientation test to the converged point. A rejection returns `false`, otherwise the value of `callback`.
+After the last step it applies the orientation test to the converged point, with the Jacobian there that the closing call carries (`J_at_x`) when it has one. A rejection returns `false`, otherwise the value of `callback`.
 """
 struct PALCStepCheck{Tstate, Titer, Talg, Tc, T, Tcb}
     state::Tstate
@@ -355,7 +355,7 @@ function (check::PALCStepCheck)(newton_state; kwargs...)
     if !_converged((newton_state.residual <= check.tol) | get(newton_state, :unmoved, false), verdict)
         return verdict
     end
-    if ~_turns_forward!(check, BorderedArray(newton_state.x, p))
+    if ~_turns_forward!(check, BorderedArray(newton_state.x, p), get(newton_state, :J_at_x, nothing))
         return false
     end
     return verdict
@@ -397,12 +397,12 @@ _observe_turn(control::CorrectorQuality, quality, turn) = observe_turn(control, 
 "Whether a tangent whose cosine with the previous one is `cosine` points back along the branch; a NaN cosine does."
 points_back(cosine::Real) = !(cosine >= 0)
 
-function _turns_forward!(check::PALCStepCheck, znew::BorderedArray)
+function _turns_forward!(check::PALCStepCheck, znew::BorderedArray, J_at_znew)
     if ~tracks_turn(check.alg)
         return true
     end
     state = check.state
-    cosine, next_tangent = turn_cosine(check.alg.tangent, state, check.iter, znew, getdot(check.alg))
+    cosine, next_tangent = turn_cosine(check.alg.tangent, state, check.iter, znew, getdot(check.alg); J_at_z = J_at_znew)
     if check.alg.orientation_check && points_back(cosine)
         if check.iter.verbosity > 0
             printstyled("Step rejected: the new tangent points away from the previous one (dot product $cosine)\n", color = :red)
@@ -523,6 +523,8 @@ This is the classical Newton-Krylov solver for `F(x, p) = 0` together
 with the scalar condition `n(x, p) ≡ θ ⋅ <x - x0, τx> + (1 - θ) ⋅ (p - p0) * τp - n0 = 0`. This makes a problem of dimension N + 1.
 
 The initial guess for the newton method is located in `state.z_pred`. With `stop_at_bounds = true`, an iterate outside `[p_min, p_max]` stops the corrector, not converged, before `F` is evaluated there. With `false` the iterates leave `p` free.
+
+The closing call of `callback` carries `J_at_x` when it has one: the Jacobian at the last iterate from the fused `FJ`, which no linear solve has used. It is valid until the next call of `FJ`.
 """
 function newton_palc(iter::AbstractContinuationIterable,
                     state::AbstractContinuationState,
@@ -574,6 +576,8 @@ function newton_palc(iter::AbstractContinuationIterable,
     while (step < max_iterations) && (res > tol) && line_step && ~unmoved && _continues(compute)
         _dFdp!(prob, dFdp, x, par, p, res_f)
         J = J_next
+        # a solve may write into J; J_next holds only a Jacobian at the current iterate that no solve has used
+        J_next = nothing
         if isnothing(J)
             J = jacobian(prob, x, set(par, paramlens, p))
         end
@@ -651,7 +655,11 @@ function newton_palc(iter::AbstractContinuationIterable,
         compute = callback((;x, res_f, J, residual=res, step, itlinear, contparams, z0, z_pred, ds, p, residuals, options = (;linsolver)); fromNewton = false, kwargs...)
     end
     verbose && print_nonlinear_step(step, res, 0, true) # display last line of the table
-    flag = _converged((residuals[end] <= tol) | unmoved, callback((;x, res_f, residual = res, step, contparams, z0, z_pred, ds, p, residuals, options = (;linsolver), closing = true, unmoved); fromNewton = false, kwargs...)) & ~rejected
+    closing_state = (;x, res_f, residual = res, step, contparams, z0, z_pred, ds, p, residuals, options = (;linsolver), closing = true, unmoved)
+    # one call per type of J_next, so that each closing state has a concrete type
+    verdict = isnothing(J_next) ? callback(closing_state; fromNewton = false, kwargs...) :
+        callback(merge(closing_state, (; J_at_x = J_next)); fromNewton = false, kwargs...)
+    flag = _converged((residuals[end] <= tol) | unmoved, verdict) & ~rejected
 
     return NonLinearSolution(BorderedArray(x, p),
                             prob,

@@ -107,13 +107,15 @@ determinant_sign(F::LA.Factorization) = last(LA.logabsdet(F))
 $(TYPEDSIGNATURES)
 
 The `Bordered` tangent at the point `z`, a new `BorderedArray` with ``\\|τ\\|_θ = 1``. The border row is the tangent `state.τ` of the previous point. With `by_determinant = false` the new tangent takes its direction (`<τ, τ_old> > 0` in `orientation_dot`, `dotθ` by default); with `by_determinant = true` it is oriented as the curve is, by the sign of the determinant of the bordered matrix (`det([J dFdl; τ']) > 0`, Allgower and Georg (2.1.7)) times `state.cache.orientation`, and can point against the previous tangent.
+`J_at_z` is the Jacobian at `z` when the caller holds it; `nothing` computes it.
 """
 function bordered_tangent(state::AbstractContinuationState,
                           iter::AbstractContinuationIterable,
                           z::BorderedArray,
                           dotθ;
                           by_determinant::Bool = false,
-                          orientation_dot = dotθ)
+                          orientation_dot = dotθ,
+                          J_at_z = nothing)
     (iter.verbosity > 0) && println("Predictor: Bordered")
     τ = state.τ
     θ = getθ(iter)
@@ -122,8 +124,7 @@ function bordered_tangent(state::AbstractContinuationState,
     # dFdl = ∂_p F(z.u, z.p)
     dFdl = _dFdp(getprob(iter), z.u, setparam(iter, z.p))
 
-    # compute jacobian at the point
-    J = jacobian(getprob(iter), z.u, setparam(iter, z.p))
+    J = _jacobian_at(J_at_z, getprob(iter), z.u, setparam(iter, z.p))
 
     # extract tangent as solution of the above bordered linear system
     lbs = get_bordered_linsolver(iter)
@@ -149,6 +150,10 @@ function bordered_tangent(state::AbstractContinuationState,
     VI.scale!(τnew, α)
     return τnew
 end
+
+"The Jacobian of `prob` at `(u, par)`: `J_at_z` when the caller holds it, else computed."
+_jacobian_at(J_at_z, prob, u, par) = J_at_z
+_jacobian_at(::Nothing, prob, u, par) = jacobian(prob, u, par)
 
 function gettangent!(state::AbstractContinuationState,
                     iter::AbstractContinuationIterable,
@@ -179,16 +184,16 @@ init_orientation_check!(state::AbstractContinuationState, ::AbstractContinuation
 """
 $(TYPEDSIGNATURES)
 
-Cosine, in the norm of `dt`, of the angle between the tangent at `state.z` and the tangent at `znew`, and the new tangent when this computed it (`nothing` otherwise). A `Bordered` predictor computes the tangent at `znew` oriented by the determinant (and the next predictor takes it). Any other predictor compares the direction of travel `sign(ds) τ` with the chord to `znew`, which stands for the new tangent.
+Cosine, in the norm of `dt`, of the angle between the tangent at `state.z` and the tangent at `znew`, and the new tangent when this computed it (`nothing` otherwise). A `Bordered` predictor computes the tangent at `znew` oriented by the determinant (and the next predictor takes it), from the Jacobian `J_at_z` at `znew` when the caller holds it. Any other predictor compares the direction of travel `sign(ds) τ` with the chord to `znew`, which stands for the new tangent.
 """
-function turn_cosine(::Bordered, state::AbstractContinuationState, iter::AbstractContinuationIterable, znew::BorderedArray, dt::DotTheta)
+function turn_cosine(::Bordered, state::AbstractContinuationState, iter::AbstractContinuationIterable, znew::BorderedArray, dt::DotTheta; J_at_z = nothing)
     τ = state.τ
-    τnew = bordered_tangent(state, iter, znew, dt; by_determinant = true)
+    τnew = bordered_tangent(state, iter, znew, dt; by_determinant = true, J_at_z)
     θ = getθ(iter)
     return dt(τ.u, τnew.u, τ.p, τnew.p, θ) / (dt(τ, θ) * dt(τnew, θ)), τnew
 end
 
-function turn_cosine(::AbstractTangentComputation, state::AbstractContinuationState, iter::AbstractContinuationIterable, znew::BorderedArray, dt::DotTheta)
+function turn_cosine(::AbstractTangentComputation, state::AbstractContinuationState, iter::AbstractContinuationIterable, znew::BorderedArray, dt::DotTheta; J_at_z = nothing)
     return sign(state.ds) * chord_cosine(dt, state.τ, state.z, znew, getθ(iter)), nothing
 end
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
