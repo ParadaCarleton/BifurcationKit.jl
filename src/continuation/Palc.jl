@@ -315,9 +315,12 @@ struct PALCStepCheck{Tstate, Titer, Talg, Tc, T, Tcb}
 end
 
 _control(::Nothing, ::Type) = nothing
-_control(control::CorrectorQuality, ::Type{T}) where {T} = CorrectorQuality{T}(control)
-"A step control already in the state's type `T`, used as is: the corrector asks for it at every step."
-_control(control::CorrectorQuality{T}, ::Type{T}) where {T} = control
+"""
+`control` in the state's type `T`: as is when it is already in `T`, else converted. The corrector asks for it at every
+step. One method decides by `S === T`, which compiles away; a second method on `CorrectorQuality{T}, Type{T}` is not
+more specific than this one to Julia's dispatch, so it would never run.
+"""
+_control(control::CorrectorQuality{S}, ::Type{T}) where {S, T} = S === T ? control : CorrectorQuality{T}(control)
 _quality(::Nothing) = nothing
 _quality(control::CorrectorQuality) = StepQuality(control)
 
