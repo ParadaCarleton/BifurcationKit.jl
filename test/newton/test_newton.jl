@@ -19,6 +19,13 @@ let
         @test eltype(sol.u) == T
     end
 end
+
+# a NaN final residual is reported as a failure to converge
+let
+    prob = BifurcationProblem((x, p) -> fill(NaN, length(x)), [1.0], nothing; J = (x, p) -> ones(1, 1))
+    sol = @test_logs (:error, r"failed to converge") match_mode = :any BK.solve(prob, Newton(), NewtonPar(verbose = true))
+    @test !BK.converged(sol)
+end
 ####################################################################################################
 function test_newton_palc(x0::Vector{T}, p0::T) where T
     @assert eltype(x0) == T
@@ -37,7 +44,7 @@ function test_newton_palc(x0::Vector{T}, p0::T) where T
     optc  = ContinuationPar{T, DefaultLS, DefaultEig}(newton_options = optn, ds = T(0.01), η = 10)
 
     prob  = BifurcationProblem(F, x0, p0, (@optic _); J = Jac, delta = (T(0.01)))
-    iter  = ContIterable(prob, PALC{Secant, MatrixBLS{Nothing}, T, BK.DotTheta}(θ = θ), optc)
+    iter  = ContIterable(prob, PALC{Secant, MatrixBLS{Nothing}, T, BK.DotTheta, Nothing, Nothing, BK.DotTheta}(θ = θ), optc)
     state = iterate(iter)[1]
     BK.newton_palc(iter, state)
 end

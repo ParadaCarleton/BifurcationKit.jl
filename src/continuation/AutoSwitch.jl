@@ -20,6 +20,7 @@ struct AutoSwitch{Talg, T} <: AbstractContinuationAlgorithm
 end
 
 AutoSwitch(;alg = PALC(tangent = Bordered()), tol_param = 1//2) = AutoSwitch(alg, tol_param)
+solver_caches(alg::AutoSwitch, it::AbstractContinuationIterable, z0::Any) = solver_caches(alg.alg, it, z0)
 
 Base.empty!(alg::AutoSwitch) = empty!(alg.alg)
 getθ(alg::AutoSwitch) = getθ(alg.alg)
