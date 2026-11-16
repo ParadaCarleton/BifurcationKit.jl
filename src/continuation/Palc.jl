@@ -197,7 +197,7 @@ function initialize!(state::AbstractContinuationState,
     gettangent!(state, iter, Secant(), getdot(alg))
     # we want to start at (u0, p0), not at (u1, p1)
     _copyto!(state.z, state.z_old)
-    if tracks_turn(alg)
+    if alg.orientation_check
         init_orientation_check!(state, iter, alg)
     end
     # then update the predictor state.z_pred
