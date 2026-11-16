@@ -70,9 +70,9 @@ _shortname(::PALC{Bordered}) = "PALC [Bordered]"
 """
 $(TYPEDSIGNATURES)
 
-Whether the `Bordered` tangents of `iter` are oriented by the determinant of the bordered matrix (`PALC` with `orientation_check` or a `max_turn`).
+Whether the `Bordered` tangents of `iter` are oriented by the determinant of the bordered matrix (`PALC` with `orientation_check`). A `max_turn` alone keeps each tangent along the previous one.
 """
-orients_by_determinant(iter::AbstractContinuationIterable) = iter.alg isa PALC && tracks_turn(iter.alg)
+orients_by_determinant(iter::AbstractContinuationIterable) = iter.alg isa PALC && iter.alg.orientation_check
 
 """
 $(TYPEDSIGNATURES)
@@ -184,11 +184,11 @@ init_orientation_check!(state::AbstractContinuationState, ::AbstractContinuation
 """
 $(TYPEDSIGNATURES)
 
-Cosine, in the norm of `dt`, of the angle between the tangent at `state.z` and the tangent at `znew`, and the new tangent when this computed it (`nothing` otherwise). A `Bordered` predictor computes the tangent at `znew` oriented by the determinant (and the next predictor takes it), from the Jacobian `J_at_z` at `znew` when the caller holds it. Any other predictor compares the direction of travel `sign(ds) τ` with the chord to `znew`, which stands for the new tangent.
+Cosine, in the norm of `dt`, of the angle between the tangent at `state.z` and the tangent at `znew`, and the new tangent when this computed it (`nothing` otherwise). A `Bordered` predictor computes the tangent at `znew` as `gettangent!` orients it (and the next predictor takes it), from the Jacobian `J_at_z` at `znew` when the caller holds it. With `orientation_check` that is the determinant orientation, and the angle spans `[0, π]`. Without it the tangent keeps the previous one's direction, so the angle reads `min(α, π - α)`: a reversal reads as no turn. Any other predictor compares the direction of travel `sign(ds) τ` with the chord to `znew`, which stands for the new tangent.
 """
 function turn_cosine(::Bordered, state::AbstractContinuationState, iter::AbstractContinuationIterable, znew::BorderedArray, dt::DotTheta; J_at_z = nothing)
     τ = state.τ
-    τnew = bordered_tangent(state, iter, znew, dt; by_determinant = true, J_at_z)
+    τnew = bordered_tangent(state, iter, znew, dt; by_determinant = orients_by_determinant(iter), orientation_dot = get_orientation_dot(iter), J_at_z)
     θ = getθ(iter)
     return dt(τ.u, τnew.u, τ.p, τnew.p, θ) / (dt(τ, θ) * dt(τnew, θ)), τnew
 end
